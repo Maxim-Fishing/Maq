@@ -35,7 +35,7 @@ function doGet(e) {
   var payload;
   if (action === 'costs') {
     // Endpoint separado y cacheado: la hoja GENERAL es grande, no debe frenar el feed principal.
-    payload = { costsByMonth: getCostsCached_(e && e.parameter && e.parameter.fresh === '1'), updated: new Date().toISOString() };
+    payload = { costs: getCostsCached_(e && e.parameter && e.parameter.fresh === '1'), updated: new Date().toISOString() };
   } else {
     payload = buildData();
   }
@@ -125,37 +125,63 @@ function mesDe_(s) {
   var m = String(s == null ? '' : s).match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
   return m ? m[3] + '-' + ('0' + m[2]).slice(-2) : '';
 }
+function topN_(map, keyName, n) {
+  return Object.keys(map).map(function (k) {
+    var o = map[k]; o[keyName] = k;
+    if (o._ots) { o.ots = Object.keys(o._ots).length; delete o._ots; }
+    o.total = Math.round(o.total);
+    return o;
+  }).sort(function (a, b) { return b.total - a.total; }).slice(0, n || 15);
+}
 function buildCosts_() {
   var v;
   try { v = displayValues_(SS_BALANCE, TAB_GENERAL); }
-  catch (e) { return []; }
-  if (!v.length) return [];
+  catch (e) { return { months: [], byMonth: {} }; }
+  if (!v.length) return { months: [], byMonth: {} };
   var acc = {}, seen = {};
   for (var r = 1; r < v.length; r++) {
     var row = v[r];
     if (row.length < 35) continue;
-    // De-duplicación: la automatización de GENERAL viene re-anexando filas idénticas
-    // (su dedup por UUID lee una columna equivocada). Colapsamos filas repetidas.
+    // De-duplicación: la automatización de GENERAL re-anexa filas idénticas
+    // (su dedup por UUID lee una columna equivocada). Colapsamos repetidas.
     var sig = (row[35] || '') + '|' + (row[4] || '') + '|' + (row[7] || '') + '|' + (row[9] || '') + '|' + (row[13] || '') + '|' + (row[34] || '');
     if (seen[sig]) continue;
     seen[sig] = true;
     var mes = mesDe_(row[10]) || mesDe_(row[7]);
     if (!mes) continue;
-    if (!acc[mes]) acc[mes] = { mes: mes, material: 0, torno: 0, fresa: 0, mo: 0, arriendo: 0, total: 0, partes: 0, ots: {} };
+    var cons = String(row[4] || '').trim(), herr = String(row[5] || '').trim();
+    var cc = String(row[3] || '').trim() || '(sin centro)', op = String(row[9] || '').trim() || '(sin operador)';
+    var tot = money_(row[34]);
+
+    if (!acc[mes]) acc[mes] = {
+      mes: mes, material: 0, torno: 0, fresa: 0, mo: 0, arriendo: 0, total: 0, partes: 0,
+      ots: {}, byOT: {}, byOp: {}, byCC: {}
+    };
     var a = acc[mes];
     a.material += money_(row[28]); a.torno += money_(row[29]); a.fresa += money_(row[30]);
-    a.mo += money_(row[31]); a.arriendo += money_(row[33]); a.total += money_(row[34]);
-    a.partes++; if (row[4]) a.ots[String(row[4]).trim()] = true;
+    a.mo += money_(row[31]); a.arriendo += money_(row[33]); a.total += tot;
+    a.partes++; if (cons) a.ots[cons] = true;
+
+    if (cons) { if (!a.byOT[cons]) a.byOT[cons] = { total: 0, herr: herr }; a.byOT[cons].total += tot; }
+    if (!a.byOp[op]) a.byOp[op] = { total: 0, _ots: {}, partes: 0 };
+    a.byOp[op].total += tot; a.byOp[op].partes++; if (cons) a.byOp[op]._ots[cons] = true;
+    if (!a.byCC[cc]) a.byCC[cc] = { total: 0, _ots: {} }; a.byCC[cc].total += tot; if (cons) a.byCC[cc]._ots[cons] = true;
   }
-  return Object.keys(acc).sort().map(function (k) {
+  var months = [], byMonth = {};
+  Object.keys(acc).sort().forEach(function (k) {
     var a = acc[k];
-    return {
-      mes: a.mes,
-      material: Math.round(a.material), torno: Math.round(a.torno), fresa: Math.round(a.fresa),
+    months.push({
+      mes: a.mes, material: Math.round(a.material), torno: Math.round(a.torno), fresa: Math.round(a.fresa),
       mo: Math.round(a.mo), arriendo: Math.round(a.arriendo), total: Math.round(a.total),
       partes: a.partes, ots: Object.keys(a.ots).length
+    });
+    byMonth[k] = {
+      ots: topN_(a.byOT, 'cons', 15),
+      operadores: topN_(a.byOp, 'op', 15),
+      centros: topN_(a.byCC, 'cc', 15)
     };
   });
+  return { months: months, byMonth: byMonth };
 }
 
 // OT ACEPTADAS + OT TERMINADAS  (registro real de órdenes con consecutivo y estado)

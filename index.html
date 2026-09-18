@@ -178,6 +178,11 @@
   .bar{width:100%;max-width:56px;background:linear-gradient(180deg,var(--orange2),var(--orange));border-radius:6px 6px 0 0;transition:height var(--t-med)}
   .bar-val{font-size:11px;font-weight:700;color:var(--ink);white-space:nowrap}
   .bar-lbl{font-size:11px;color:var(--muted);white-space:nowrap}
+  .bar.sel{outline:2px solid var(--ink);outline-offset:1px}
+  .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  @media(max-width:980px){.grid-3{grid-template-columns:1fr}}
+  tr.row-sel td{background:var(--orange-soft)}
+  #costs-month{height:39px;border:1px solid #d9dee5;border-radius:var(--r-sm);padding:0 11px;background:#fff;font:inherit}
 
   /* ---------- Toast ---------- */
   .toast{position:fixed;right:22px;bottom:22px;z-index:30;background:#172019;color:#eaffee;padding:12px 16px;border-radius:var(--r-md);box-shadow:var(--shadow);max-width:360px;animation:toastIn var(--t-med) both}
@@ -314,8 +319,8 @@
           <span class="nav-label">Pendientes por llenar</span>
         </button>
         <button id="users-nav" data-view="users">
-          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          <span class="nav-label">Usuarios</span>
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span class="nav-label">Configuración</span>
         </button>
       </nav>
       <button class="logout" id="logout">
@@ -365,14 +370,20 @@
 
         <section id="costs" class="view">
           <div class="view-head">
-            <div><h2>Costos por mes</h2><p>Consolidado de costos de maquinado por mes. <span id="costs-src" class="muted"></span></p></div>
+            <div><h2>Costos por mes</h2><p>Análisis de costos de maquinado. <span id="costs-src" class="muted"></span></p></div>
+            <div class="actions">
+              <label for="costs-month" class="muted" style="align-self:center;font-weight:700">Mes</label>
+              <select id="costs-month" aria-label="Seleccionar mes"></select>
+            </div>
           </div>
           <div class="stats" id="costs-stats"></div>
           <article class="card">
-            <div class="card-title">Costo total por mes</div>
+            <div class="card-title">Costo total por mes <span id="costs-sel-lbl" class="muted"></span></div>
             <div class="card-body"><div id="costs-chart"></div></div>
           </article>
+          <div class="grid-3" id="costs-detail" style="margin-top:18px"></div>
           <article class="card" style="margin-top:18px">
+            <div class="card-title">Resumen de todos los meses</div>
             <div class="table-wrap">
               <table><thead><tr><th>Mes</th><th>OTs</th><th>Material</th><th>Torno</th><th>Fresa</th><th>Mano de obra</th><th>Arriendo</th><th>Total</th></tr></thead><tbody id="costs-table"></tbody></table>
             </div>
@@ -411,8 +422,15 @@
         </section>
 
         <section id="approvals" class="view">
-          <div class="view-head"><div><h2>Aprobaciones</h2><p>Trabajos de maquinado pendientes de aprobación.</p></div></div>
+          <div class="view-head"><div><h2>Aprobaciones</h2><p>Solicitudes de OT y trabajos de maquinado pendientes de decisión.</p></div></div>
           <article class="card">
+            <div class="card-title">Solicitudes por aprobar <span id="appr-sol-count" class="muted"></span></div>
+            <div class="table-wrap">
+              <table><thead><tr><th>Solicitante</th><th>Herramienta</th><th>Tipo</th><th>Requerida</th><th>Acción</th></tr></thead><tbody id="approvals-sol-table"></tbody></table>
+            </div>
+          </article>
+          <article class="card" style="margin-top:18px">
+            <div class="card-title">Trabajos por aprobar <span id="appr-rep-count" class="muted"></span></div>
             <div class="table-wrap">
               <table><thead><tr><th>Consecutivo</th><th>Detalle</th><th>Operador</th><th>Estado</th><th>Acción</th></tr></thead><tbody id="approvals-table"></tbody></table>
             </div>
@@ -453,12 +471,20 @@
 
         <section id="users" class="view">
           <div class="view-head">
-            <div><h2>Usuarios</h2><p>Alta, rol y estado de acceso. Disponible solo para Administrador.</p></div>
+            <div><h2>Configuración</h2><p>Usuarios y variables de costo del maquinado.</p></div>
             <button class="primary" data-open="user">Añadir usuario</button>
           </div>
           <article class="card">
+            <div class="card-title">Usuarios</div>
             <div class="table-wrap">
               <table><thead><tr><th>Nombre</th><th>Correo</th><th>Rol</th><th>Estado</th><th>Acción</th></tr></thead><tbody id="users-table"></tbody></table>
+            </div>
+          </article>
+          <article class="card" style="margin-top:18px">
+            <div class="card-title">Costos y variables</div>
+            <div class="card-body">
+              <p class="muted" style="margin:0 0 8px">Aquí podrás editar, sin abrir Excel: el valor de hora por tornero, el valor por máquina (torno/fresa/sierra), los precios de material y demás variables con las que se calculan los costos.</p>
+              <p class="notice" style="margin:0">Edición en preparación: requiere habilitar la escritura hacia el libro BALANCE. Lo activamos en el siguiente paso.</p>
             </div>
           </article>
         </section>
@@ -527,6 +553,7 @@ const state = {
   reports: [],      // Reportes de maquinado — más reciente primero
   pending: [],      // Cola de OT abiertas sin reporte
   costs: RAW_COSTS, // Costos por mes (muestra embebida; el feed en vivo la reemplaza)
+  costsDetail: {},  // Detalle por mes: {mes: {ots, operadores, centros}}
   costsIsLive: false,
   hasRegistry: false,
   operators: [],    // Nombres para el login
@@ -613,8 +640,10 @@ async function fetchCosts(force) {
     const sep = url.includes('?') ? '&' : '?';
     const res = await fetch(url + sep + 'action=costs' + (force ? '&fresh=1' : ''), { method:'GET' });
     const data = await res.json();
-    if (data && data.costsByMonth && data.costsByMonth.length) {
-      state.costs = data.costsByMonth; state.costsIsLive = true; costsLoaded = true;
+    const c = data && data.costs;
+    if (c && c.months && c.months.length) {
+      state.costs = c.months; state.costsDetail = c.byMonth || {}; state.costsIsLive = true; costsLoaded = true;
+      state.costsMonthSel = '';  // reset al último mes
     }
   } catch (e) { /* silencioso: queda la muestra embebida */ }
   finally { costsLoading = false; renderCosts(); }
@@ -782,6 +811,11 @@ function render() {
 }
 
 const money = n => '$' + Math.round(n || 0).toLocaleString('es-CO');
+function costCard(titulo, header, rows) {
+  return `<article class="card"><div class="card-title">${esc(titulo)}</div><div class="table-wrap">
+    <table class="mini"><thead><tr>${header.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+    <tbody>${rows || `<tr><td colspan="${header.length}" class="muted" style="padding:14px">Sin datos</td></tr>`}</tbody></table></div></article>`;
+}
 function renderCosts() {
   const meses = state.costs || [];
   $('#costs-src').textContent = costsLoading
@@ -790,40 +824,53 @@ function renderCosts() {
         ? `${meses.length} meses · en vivo`
         : (meses.length ? `${meses.length} meses · muestra (se completa al conectar el feed)` : ''));
 
+  const sel = $('#costs-month');
   if (!meses.length) {
+    if (sel) sel.innerHTML = '';
     $('#costs-stats').innerHTML = '';
     $('#costs-chart').innerHTML = emptyState(iconSearch, 'Sin costos', 'El tablero se llena al conectar el feed en vivo (hoja GENERAL).');
-    $('#costs-table').innerHTML = '';
+    $('#costs-detail').innerHTML = ''; $('#costs-table').innerHTML = '';
     return;
   }
 
-  const tot = meses.reduce((a, m) => a + (m.total || 0), 0);
-  const ultimo = meses[meses.length - 1];
-  const prom = tot / meses.length;
-  $('#costs-stats').innerHTML = `
-    <div class="stat"><b>Total acumulado</b><strong>${money(tot)}</strong><span>${meses.length} meses</span></div>
-    <div class="stat"><b>Último mes (${esc(ultimo.mes)})</b><strong>${money(ultimo.total)}</strong><span>${ultimo.ots} OT</span></div>
-    <div class="stat"><b>Promedio mensual</b><strong>${money(prom)}</strong><span>por mes</span></div>
-    <div class="stat"><b>Material acumulado</b><strong>${money(meses.reduce((a,m)=>a+(m.material||0),0))}</strong><span>del total</span></div>`;
+  const selMes = state.costsMonthSel || meses[meses.length - 1].mes;
+  if (sel) sel.innerHTML = meses.slice().reverse().map(m => `<option value="${esc(m.mes)}" ${m.mes === selMes ? 'selected' : ''}>${esc(m.mes)}</option>`).join('');
+  const m = meses.find(x => x.mes === selMes) || meses[meses.length - 1];
+  $('#costs-sel-lbl').textContent = '· ' + selMes;
 
-  const max = Math.max(...meses.map(m => m.total || 0), 1);
-  $('#costs-chart').innerHTML = `<div class="bars">${meses.map(m => `
-    <div class="bar-col" title="${esc(m.mes)}: ${money(m.total)}">
-      <span class="bar-val">${money(m.total)}</span>
-      <div class="bar" style="height:${Math.max(4, Math.round((m.total || 0) / max * 160))}px"></div>
-      <span class="bar-lbl">${esc(m.mes)}</span>
+  $('#costs-stats').innerHTML = `
+    <div class="stat"><b>Total del mes</b><strong>${money(m.total)}</strong><span>${esc(selMes)} · ${m.ots} OT</span></div>
+    <div class="stat"><b>Mano de obra</b><strong>${money(m.mo)}</strong><span>del mes</span></div>
+    <div class="stat"><b>Máquinas (torno+fresa)</b><strong>${money((m.torno||0)+(m.fresa||0))}</strong><span>+ arriendo ${money(m.arriendo)}</span></div>
+    <div class="stat"><b>Material</b><strong>${money(m.material)}</strong><span>del mes</span></div>`;
+
+  const max = Math.max(...meses.map(x => x.total || 0), 1);
+  $('#costs-chart').innerHTML = `<div class="bars">${meses.map(x => `
+    <div class="bar-col" title="${esc(x.mes)}: ${money(x.total)}">
+      <span class="bar-val">${money(x.total)}</span>
+      <div class="bar${x.mes === selMes ? ' sel' : ''}" style="height:${Math.max(4, Math.round((x.total || 0) / max * 160))}px"></div>
+      <span class="bar-lbl">${esc(x.mes)}</span>
     </div>`).join('')}</div>`;
 
-  $('#costs-table').innerHTML = meses.map(m => `
-    <tr>
-      <td data-label="Mes"><b>${esc(m.mes)}</b></td>
-      <td data-label="OTs">${m.ots || 0}</td>
-      <td data-label="Material">${money(m.material)}</td>
-      <td data-label="Torno">${money(m.torno)}</td>
-      <td data-label="Fresa">${money(m.fresa)}</td>
-      <td data-label="Mano de obra">${money(m.mo)}</td>
-      <td data-label="Arriendo">${money(m.arriendo)}</td>
-      <td data-label="Total"><b>${money(m.total)}</b></td>
+  const d = (state.costsDetail || {})[selMes] || {};
+  const topOT = (d.ots || []).map(o => `<tr><td><b>${esc(o.cons)}</b></td><td class="subject">${esc(o.herr || '—')}</td><td>${money(o.total)}</td></tr>`).join('');
+  const topOp = (d.operadores || []).map(o => `<tr><td>${esc(o.op)}</td><td>${o.ots || 0}</td><td>${money(o.total)}</td></tr>`).join('');
+  const topCC = (d.centros || []).map(o => `<tr><td>${esc(o.cc)}</td><td>${o.ots || 0}</td><td>${money(o.total)}</td></tr>`).join('');
+  $('#costs-detail').innerHTML =
+    costCard('OT más costosas', ['OT', 'Herramienta', 'Costo'], topOT) +
+    costCard('Torneros (trabajo y costo)', ['Operador', 'OT', 'Costo'], topOp) +
+    costCard('Líneas / centros de costo', ['Centro', 'OT', 'Costo'], topCC);
+
+  $('#costs-table').innerHTML = meses.slice().reverse().map(x => `
+    <tr class="${x.mes === selMes ? 'row-sel' : ''}">
+      <td data-label="Mes"><b>${esc(x.mes)}</b></td>
+      <td data-label="OTs">${x.ots || 0}</td>
+      <td data-label="Material">${money(x.material)}</td>
+      <td data-label="Torno">${money(x.torno)}</td>
+      <td data-label="Fresa">${money(x.fresa)}</td>
+      <td data-label="Mano de obra">${money(x.mo)}</td>
+      <td data-label="Arriendo">${money(x.arriendo)}</td>
+      <td data-label="Total"><b>${money(x.total)}</b></td>
     </tr>`).join('');
 }
 
@@ -895,8 +942,25 @@ function renderPending() {
     : `<tr><td colspan="5">${emptyState('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 6 9 17l-5-5"/></svg>','Todo al día','No hay órdenes en cola sin reporte.')}</td></tr>`;
 }
 
+const iconCheck = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 6 9 17l-5-5"/></svg>';
 function renderApprovals() {
+  // Solicitudes de OT pendientes — el líder de maquinado asigna PR/NP al aceptar
+  const sols = state.solicitudes.filter(s => (s.estado || '') === 'Pendiente');
+  $('#appr-sol-count').textContent = sols.length ? `(${sols.length})` : '';
+  $('#approvals-sol-table').innerHTML = sols.length
+    ? sols.map(s => `
+      <tr>
+        <td data-label="Solicitante"><b>${esc(s.sol || '—')}</b></td>
+        <td data-label="Herramienta" class="subject">${esc(s.herr || '—')}</td>
+        <td data-label="Tipo">${tipoPill(s.tipo)}</td>
+        <td data-label="Requerida">${esc(fmtDate(s.entrega))}</td>
+        <td data-label="Acción"><button class="primary" data-action="accept-sol" data-idx="${state.solicitudes.indexOf(s)}">Revisar y aceptar</button></td>
+      </tr>`).join('')
+    : `<tr><td colspan="5">${emptyState(iconCheck,'Sin solicitudes','No hay solicitudes pendientes de aprobación.')}</td></tr>`;
+
+  // Trabajos (reportes) pendientes de aprobación
   const rows = state.reports.filter(r => r.estado === 'Pendiente');
+  $('#appr-rep-count').textContent = rows.length ? `(${rows.length})` : '';
   $('#approvals-table').innerHTML = rows.length
     ? rows.map(r => `
       <tr>
@@ -909,7 +973,7 @@ function renderApprovals() {
           <button class="primary" data-action="approve-report" data-idx="${state.reports.indexOf(r)}">Aprobar</button>
         </td>
       </tr>`).join('')
-    : `<tr><td colspan="5">${emptyState('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 6 9 17l-5-5"/></svg>','Todo al día','No hay trabajos pendientes de aprobación.')}</td></tr>`;
+    : `<tr><td colspan="5">${emptyState(iconCheck,'Todo al día','No hay trabajos pendientes de aprobación.')}</td></tr>`;
 }
 
 function renderUsers() {
@@ -929,7 +993,7 @@ function renderUsers() {
 }
 
 /* ---------- Navegación ---------- */
-const VIEW_TITLES = {dashboard:'Inicio', costs:'Costos', orders:'Órdenes', requests:'Solicitudes', approvals:'Aprobaciones', reports:'Reportes', pending:'Pendientes por llenar', users:'Usuarios'};
+const VIEW_TITLES = {dashboard:'Inicio', costs:'Costos', orders:'Órdenes', requests:'Solicitudes', approvals:'Aprobaciones', reports:'Reportes', pending:'Pendientes por llenar', users:'Configuración'};
 function show(view) {
   if (!VIEW_TITLES[view]) return;
   $$('.view').forEach(v => v.classList.toggle('active', v.id === view));
@@ -955,7 +1019,7 @@ function requestModal() {
         <div class="field"><label for="req-code">Código de herramienta</label><input id="req-code" name="toolCode" placeholder="Opcional"></div>
         <div class="field full"><label for="req-notes">Indicaciones del cliente</label><textarea required id="req-notes" name="notes" placeholder="Describe el trabajo requerido, especificaciones y condiciones."></textarea><span class="error-msg" data-error-for="notes"></span></div>
         <div class="field"><label for="req-due">Fecha requerida</label><input required id="req-due" name="dueDate" type="date" min="${today()}"><span class="error-msg" data-error-for="dueDate"></span></div>
-        <div class="field"><label for="req-prefix">Clasificación</label><select id="req-prefix" name="prefix"><option value="PR">Programada (PR)</option><option value="NP">No programada (NP)</option><option value="RE">Reparo (RE)</option></select></div>
+        <div class="field full"><p class="notice" style="margin:0">La clasificación (Programada / No programada) la asigna el líder de maquinado al aceptar la orden.</p></div>
         <div class="section-label">Partes a fabricar o reparar</div>
         <div id="parts" class="repeat">
           <div class="repeat-row">
@@ -1215,6 +1279,62 @@ function toggleUser(i) {
   });
 }
 
+/* ---------- Aceptar solicitud (líder de maquinado asigna PR/NP/RE) ---------- */
+function openAcceptSolicitud(idx) {
+  const s = state.solicitudes[idx];
+  if (!s) return;
+  const partes = (s.partes || []).length
+    ? `<div class="section-label">Partes a fabricar / reparar</div>
+       <table class="mini"><thead><tr><th>Cant.</th><th>Parte</th></tr></thead><tbody>
+       ${s.partes.map(p => `<tr><td>${esc(p.q || '')}</td><td>${esc(p.n)}</td></tr>`).join('')}</tbody></table>`
+    : '';
+  modal(`Aceptar solicitud · ${esc(s.herr || '')}`, `
+    <div class="form detail">
+      ${dl('Solicitante', s.sol)}
+      ${dl('Correo', s.correo)}
+      ${dl('Centro de costos', s.cc)}
+      ${dl('Tipo de OT', s.tipo)}
+      ${dl('Herramienta', s.herr)}
+      ${dl('Tipo de trabajo', s.trab)}
+      ${dl('Fecha requerida', fmtDate(s.entrega))}
+      ${s.ind ? `<div class="dl-block"><span>Indicaciones del cliente</span><p>${esc(s.ind)}</p></div>` : ''}
+      ${partes}
+      <div class="section-label">Clasificación de la OT</div>
+      <p class="muted" style="margin:0 0 4px">Como líder de maquinado, elige cómo generar el consecutivo. Esto crea la OT en tu sistema.</p>
+    </div>`,
+    `<button class="secondary" data-close>Cancelar</button>
+     <button class="secondary" data-accept-prefix="RE">Reparo (RE)</button>
+     <button class="primary" data-accept-prefix="NP">No programada (NP)</button>
+     <button class="primary" data-accept-prefix="PR" style="background:var(--green);color:#fff">Programada (PR)</button>`);
+  $$('#modal-root [data-accept-prefix]').forEach(b =>
+    b.addEventListener('click', () => acceptSolicitud(idx, b.dataset.acceptPrefix)));
+}
+
+async function acceptSolicitud(idx, prefijo) {
+  const s = state.solicitudes[idx];
+  if (!s) return;
+  const prog = {PR:'Programada', NP:'No programada', RE:'Reparo'}[prefijo] || prefijo;
+  const url = localStorage.getItem('maxim_approve_url') || '';
+  if (!url) {
+    closeModal();
+    toast(`Falta configurar la URL del Web App de solicitudes para aprobar desde aquí. Por ahora, apruébala como ${prefijo} desde el correo.`, 'error');
+    return;
+  }
+  if (!s.uuid) { toast('Esta solicitud no tiene UUID; apruébala desde el correo.', 'error'); return; }
+  const btn = document.querySelector(`#modal-root [data-accept-prefix="${prefijo}"]`);
+  await withLoading(btn, 'Aprobando…', async () => {
+    try {
+      const body = `formType=aceptacion&id=${encodeURIComponent(s.uuid)}&prefijo=${encodeURIComponent(prefijo)}`;
+      const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      s.estado = 'Aprobada';
+      closeModal(); renderApprovals(); render();
+      toast(`Solicitud aprobada como ${prog} (${prefijo}). El consecutivo se genera en tu sistema.`);
+      setTimeout(() => refreshLive(false), 2000);
+    } catch (e) { toast('No se pudo aprobar: ' + e.message, 'error'); }
+  });
+}
+
 function approveReport(idx) {
   const r = state.reports[idx];
   if (!r) return;
@@ -1325,6 +1445,7 @@ document.addEventListener('click', e => {
     if (t.dataset.action === 'open-order') openOrder(+idx, t.dataset.src);
     if (t.dataset.action === 'open-report') openReport(+idx);
     if (t.dataset.action === 'approve-report') approveReport(+idx);
+    if (t.dataset.action === 'accept-sol') openAcceptSolicitud(+idx);
     if (t.dataset.action === 'fill-pending') fillPending(t.dataset.cons);
     if (t.dataset.action === 'approve') approveRequest(id);
     if (t.dataset.action === 'reject') rejectRequest(id);
@@ -1338,6 +1459,7 @@ $('#report-search').addEventListener('input', debounce(renderReports, 200));
 $('#report-op').addEventListener('change', renderReports);
 $('#report-estado').addEventListener('change', renderReports);
 $('#pending-search').addEventListener('input', debounce(renderPending, 200));
+$('#costs-month').addEventListener('change', e => { state.costsMonthSel = e.target.value; renderCosts(); });
 
 /* Hidratación inicial con los datos embebidos (fallback sin conexión) */
 applyData(RAW);
