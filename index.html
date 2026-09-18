@@ -603,6 +603,23 @@ function startLive() {
   liveTimer = setInterval(() => { if (!$('#app').classList.contains('hidden')) refreshLive(false); }, 120000);
 }
 
+/* ---------- Costos (endpoint separado y cacheado; la hoja GENERAL es pesada) ---------- */
+let costsLoaded = false, costsLoading = false;
+async function fetchCosts(force) {
+  const url = liveUrl();
+  if (!url || costsLoading || (costsLoaded && !force)) return;
+  costsLoading = true; renderCosts();
+  try {
+    const sep = url.includes('?') ? '&' : '?';
+    const res = await fetch(url + sep + 'action=costs' + (force ? '&fresh=1' : ''), { method:'GET' });
+    const data = await res.json();
+    if (data && data.costsByMonth && data.costsByMonth.length) {
+      state.costs = data.costsByMonth; state.costsIsLive = true; costsLoaded = true;
+    }
+  } catch (e) { /* silencioso: queda la muestra embebida */ }
+  finally { costsLoading = false; renderCosts(); }
+}
+
 /* ---------- API ---------- */
 async function api(action, payload = {}) {
   if (DEMO) return { ok:true, data:null };
@@ -767,9 +784,11 @@ function render() {
 const money = n => '$' + Math.round(n || 0).toLocaleString('es-CO');
 function renderCosts() {
   const meses = state.costs || [];
-  $('#costs-src').textContent = state.costsIsLive
-    ? `${meses.length} meses · en vivo`
-    : (meses.length ? `${meses.length} meses · muestra (se completa al conectar el feed)` : '');
+  $('#costs-src').textContent = costsLoading
+    ? 'calculando costos en vivo… (puede tardar)'
+    : (state.costsIsLive
+        ? `${meses.length} meses · en vivo`
+        : (meses.length ? `${meses.length} meses · muestra (se completa al conectar el feed)` : ''));
 
   if (!meses.length) {
     $('#costs-stats').innerHTML = '';
@@ -920,6 +939,7 @@ function show(view) {
     if (active) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current');
   });
   $('#page-title').textContent = VIEW_TITLES[view];
+  if (view === 'costs') fetchCosts();
 }
 
 /* ---------- Formularios ---------- */

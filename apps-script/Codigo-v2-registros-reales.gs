@@ -31,9 +31,28 @@ var TAB_TERMINADAS  = 'OT TERMINADAS';
 var TAB_RESULTADOS  = 'RESULTADOS OT';
 
 function doGet(e) {
-  var out = ContentService.createTextOutput(JSON.stringify(buildData()));
+  var action = (e && e.parameter && e.parameter.action) ? e.parameter.action : '';
+  var payload;
+  if (action === 'costs') {
+    // Endpoint separado y cacheado: la hoja GENERAL es grande, no debe frenar el feed principal.
+    payload = { costsByMonth: getCostsCached_(e && e.parameter && e.parameter.fresh === '1'), updated: new Date().toISOString() };
+  } else {
+    payload = buildData();
+  }
+  var out = ContentService.createTextOutput(JSON.stringify(payload));
   out.setMimeType(ContentService.MimeType.JSON);
   return out;
+}
+
+function getCostsCached_(fresh) {
+  var cache = CacheService.getScriptCache();
+  if (!fresh) {
+    var hit = cache.get('costsByMonth');
+    if (hit) { try { return JSON.parse(hit); } catch (e) {} }
+  }
+  var data = buildCosts_();
+  try { cache.put('costsByMonth', JSON.stringify(data), 21600); } catch (e) {} // 6 h
+  return data;
 }
 
 // ---------- utilidades ----------
@@ -89,7 +108,6 @@ function buildData() {
     solicitudes: solicitudes,
     reports: reports,
     pending: pending,
-    costsByMonth: buildCosts_(),
     operators: uniqNames_(reports.map(function (r) { return r.op; })),
     requesters: uniqNames_(solicitudes.map(function (s) { return s.sol; }).concat(orders.map(function (o) { return o.sol; }))),
     updated: new Date().toISOString()
@@ -112,10 +130,15 @@ function buildCosts_() {
   try { v = displayValues_(SS_BALANCE, TAB_GENERAL); }
   catch (e) { return []; }
   if (!v.length) return [];
-  var acc = {};
+  var acc = {}, seen = {};
   for (var r = 1; r < v.length; r++) {
     var row = v[r];
     if (row.length < 35) continue;
+    // De-duplicación: la automatización de GENERAL viene re-anexando filas idénticas
+    // (su dedup por UUID lee una columna equivocada). Colapsamos filas repetidas.
+    var sig = (row[35] || '') + '|' + (row[4] || '') + '|' + (row[7] || '') + '|' + (row[9] || '') + '|' + (row[13] || '') + '|' + (row[34] || '');
+    if (seen[sig]) continue;
+    seen[sig] = true;
     var mes = mesDe_(row[10]) || mesDe_(row[7]);
     if (!mes) continue;
     if (!acc[mes]) acc[mes] = { mes: mes, material: 0, torno: 0, fresa: 0, mo: 0, arriendo: 0, total: 0, partes: 0, ots: {} };
