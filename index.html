@@ -61,6 +61,9 @@
   .topbar h1{font-size:18px;margin:0}
   .user{display:flex;align-items:center;gap:9px}
   .avatar{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:#ffead9;color:#aa4700;font-weight:800}
+  .topbar-right{display:flex;align-items:center;gap:16px}
+  .live-updated{font-size:12px;color:var(--muted);white-space:nowrap}
+  #refresh-btn{padding:8px 12px}
   .content{padding:28px 32px;max-width:1500px;margin:auto}
   .view{display:none;animation:fadeIn var(--t-med) both}
   .view.active{display:block}
@@ -312,10 +315,17 @@
     <main class="main">
       <header class="topbar">
         <h1 id="page-title">Inicio</h1>
-        <div class="user">
-          <span id="user-role" class="pill open">Solicitante</span>
-          <span class="avatar" id="avatar">M</span>
-          <span id="user-name">Usuario</span>
+        <div class="topbar-right">
+          <span id="live-updated" class="live-updated"></span>
+          <button id="refresh-btn" class="secondary hidden" title="Actualizar datos desde Google">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+            <span class="btn-label">Actualizar</span>
+          </button>
+          <div class="user">
+            <span id="user-role" class="pill open">Solicitante</span>
+            <span class="avatar" id="avatar">M</span>
+            <span id="user-name">Usuario</span>
+          </div>
         </div>
       </header>
       <div class="content">
@@ -480,20 +490,77 @@ const DEFAULT_USERS = [
 const state = {
   user: {name:'', role:'Solicitante'},
   users: JSON.parse(localStorage.getItem('maxim_demo_users') || 'null') || DEFAULT_USERS,
-  // Órdenes de trabajo (formulario OT) — orden más reciente primero
-  ot: [...RAW.orders].reverse(),
-  // Reportes de maquinado (formulario Resultados) — más reciente primero
-  reports: [...RAW.reports].reverse(),
-  // Cola de pendientes (hoja PENDIENTES)
-  pending: RAW.pending || [],
-  // Listas de nombres para el login
-  operators: RAW.operators || [],
-  requesters: RAW.requesters || [],
+  ot: [],          // Órdenes de trabajo (OT) — más reciente primero
+  reports: [],     // Reportes de maquinado — más reciente primero
+  pending: [],     // Cola de pendientes (hoja PENDIENTES)
+  operators: [],   // Nombres para el login
+  requesters: [],
   requests: [],
   activity: []
 };
 // Consecutivos que ya tienen al menos un reporte
-const REPORTED = new Set(state.reports.map(r => otCode(r.cons)).filter(Boolean));
+let REPORTED = new Set();
+
+/* ---------- Fuente de datos (embebida + en vivo) ----------
+   Hidrata el estado desde un objeto {orders, reports, pending, operators, requesters}.
+   Se llama al cargar (datos embebidos) y en cada refresco en vivo.            */
+function applyData(data) {
+  if (!data) return;
+  state.ot         = [...(data.orders || [])].reverse();
+  state.reports    = [...(data.reports || [])].reverse();
+  state.pending    = data.pending || [];
+  state.operators  = data.operators || [];
+  state.requesters = data.requesters || [];
+  REPORTED = new Set(state.reports.map(r => otCode(r.cons)).filter(Boolean));
+
+  if ($('#free-name')) fillNameOptions();
+  const repOp = $('#report-op');
+  if (repOp) {
+    const cur = repOp.value;
+    const ops = [...new Set(state.reports.map(r => r.op).filter(Boolean))].sort();
+    repOp.innerHTML = '<option value="">Todos los operadores</option>' + ops.map(o => `<option>${esc(o)}</option>`).join('');
+    repOp.value = cur;
+  }
+  if (!$('#app').classList.contains('hidden')) render();
+}
+
+/* ---------- Datos en vivo (Web App de Apps Script) ----------
+   Deja LIVE_URL con la URL /exec del Web App (o guárdala en
+   localStorage 'maxim_live_url'). Si no hay URL, la app usa los
+   datos embebidos y oculta el botón Actualizar.                              */
+const LIVE_URL = 'https://script.google.com/macros/s/AKfycbw4Ej3RJHjy40fpBWUqGwNIA7KK9gDJtqPJxoghT9kqxmVazKDK8eK3xsJK6KrAy3I/exec';
+const liveUrl = () => localStorage.getItem('maxim_live_url') || (LIVE_URL.startsWith('http') ? LIVE_URL : '');
+let liveTimer = null;
+
+async function refreshLive(manual) {
+  const url = liveUrl();
+  if (!url) return;
+  const btn = $('#refresh-btn');
+  try {
+    if (btn) { btn.disabled = true; btn.querySelector('.btn-label').textContent = 'Actualizando…'; }
+    const res = await fetch(url, { method:'GET' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    applyData(data);
+    const t = new Date();
+    $('#live-updated').textContent = 'Actualizado ' + t.toLocaleTimeString('es-CO', {hour:'2-digit', minute:'2-digit'});
+    if (manual) toast('Datos actualizados.');
+  } catch (e) {
+    if (manual) toast('No se pudo actualizar en vivo: ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.querySelector('.btn-label').textContent = 'Actualizar'; }
+  }
+}
+
+function startLive() {
+  const on = !!liveUrl();
+  const btn = $('#refresh-btn');
+  if (btn) btn.classList.toggle('hidden', !on);
+  if (!on) { $('#live-updated').textContent = ''; return; }
+  refreshLive(false);
+  clearInterval(liveTimer);
+  liveTimer = setInterval(() => { if (!$('#app').classList.contains('hidden')) refreshLive(false); }, 120000);
+}
 
 /* ---------- API ---------- */
 async function api(action, payload = {}) {
@@ -1124,6 +1191,7 @@ function start() {
 
     render();
     show(visible[0]);
+    startLive();
   }, 200);
 }
 
@@ -1158,11 +1226,9 @@ $('#report-op').addEventListener('change', renderReports);
 $('#report-estado').addEventListener('change', renderReports);
 $('#pending-search').addEventListener('input', debounce(renderPending, 200));
 
-/* Poblar el selector de operadores con los reales */
-(() => {
-  const ops = [...new Set(state.reports.map(r => r.op).filter(Boolean))].sort();
-  $('#report-op').insertAdjacentHTML('beforeend', ops.map(o => `<option>${esc(o)}</option>`).join(''));
-})();
+/* Hidratación inicial con los datos embebidos (fallback sin conexión) */
+applyData(RAW);
+$('#refresh-btn').addEventListener('click', () => refreshLive(true));
 $('#logout').addEventListener('click', () => {
   sessionStorage.clear();
   $('#app').classList.add('hidden');
