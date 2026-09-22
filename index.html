@@ -358,7 +358,7 @@
             <article class="card">
               <div class="card-title">Órdenes recientes <button class="secondary" data-view="orders">Ver todas</button></div>
               <div class="table-wrap">
-                <table><thead><tr><th>Herramienta</th><th>Solicitante</th><th>Entrega</th><th>Tipo</th></tr></thead><tbody id="priority-orders"></tbody></table>
+                <table><thead><tr><th>Herramienta</th><th>Solicitante</th><th>Entrega</th><th>Estado</th></tr></thead><tbody id="priority-orders"></tbody></table>
               </div>
             </article>
             <article class="card">
@@ -399,6 +399,9 @@
             <input id="order-search" placeholder="Buscar por herramienta, solicitante o indicaciones" aria-label="Buscar órdenes">
             <select id="order-status" aria-label="Filtrar por tipo de OT">
               <option value="">Todos los tipos</option><option>Desarrollo especial</option><option>Salida a campo</option><option>Reabastecimiento de inventario</option><option>Cubrimientos</option>
+            </select>
+            <select id="order-estado" aria-label="Filtrar por estado">
+              <option value="">Todos los estados</option><option>Abierta</option><option>Cerrada</option>
             </select>
           </div>
           <article class="card">
@@ -1008,6 +1011,21 @@ const iconSearch = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 const isMe = name => norm(name) === norm(state.user.name);
 const pendingOpen = () => state.pending.filter(p => !REPORTED.has(otCode(p.cons)));
 
+// Feed unificado del ciclo completo para "Órdenes recientes":
+// solicitudes aún NO aprobadas (Pendiente/Rechazada) + órdenes reales (Abierta/Cerrada),
+// ordenado por fecha (más reciente primero). Las aprobadas ya figuran como su orden.
+function recentFeed() {
+  if (!state.hasRegistry) {
+    return [...state.ot].map(o => ({ ...o, _estado: o.estado || '' }))
+      .sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+  }
+  const sol = (state.solicitudes || [])
+    .filter(s => (s.estado || 'Pendiente') !== 'Aprobada')
+    .map(s => ({ ...s, _estado: s.estado || 'Pendiente' }));
+  const ord = (state.ot || []).map(o => ({ ...o, _estado: o.estado || 'Abierta' }));
+  return [...sol, ...ord].sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+}
+
 function render() {
   const ot = state.ot, reps = state.reports;
   const abiertas = state.hasRegistry ? ot.filter(o => (o.estado || '') === 'Abierta').length : ot.length;
@@ -1021,14 +1039,14 @@ function render() {
     <div class="stat"><b>Por aprobar</b><strong>${solPend + repPend}</strong><span>${solPend} solicitudes · ${repPend} trabajos</span></div>
     <div class="stat"><b>Pendientes por llenar</b><strong>${porLlenar}</strong><span>OT abiertas sin reporte</span></div>`;
 
-  const priority = ot.slice(0,6);
+  const priority = recentFeed().slice(0,8);
   $('#priority-orders').innerHTML = priority.length
     ? priority.map(o => `
       <tr>
         <td data-label="Herramienta" class="subject">${o.cons ? `<b>${esc(o.cons)}</b> · ` : ''}${esc(o.herr || '—')}</td>
         <td data-label="Solicitante">${esc(o.sol || '—')}</td>
-        <td data-label="Entrega">${esc(fmtDate(o.entrega))}</td>
-        <td data-label="Tipo">${o.estado ? statusPill(o.estado) : tipoPill(o.tipo)}</td>
+        <td data-label="Entrega">${esc(fmtDate(o.entrega || o.fecha))}</td>
+        <td data-label="Estado">${o._estado ? statusPill(o._estado) : '<span class="muted">—</span>'}</td>
       </tr>`).join('')
     : `<tr><td colspan="4">${emptyState(iconSearch,'Sin órdenes','No hay órdenes de trabajo cargadas.')}</td></tr>`;
 
@@ -1111,12 +1129,14 @@ function renderCosts() {
 function renderOrders() {
   const q = ($('#order-search').value || '').toLowerCase();
   const f = $('#order-status').value;
+  const fe = ($('#order-estado') && $('#order-estado').value) || '';
   const mine = state.user.role === 'Solicitante';
   const src = mine ? 'sol' : 'ot';
   const arr = mine ? state.solicitudes : state.ot;
   const base = mine ? arr.filter(o => isMe(o.sol)) : arr;
   const rows = base
     .filter(o => !f || o.tipo === f)
+    .filter(o => !fe || (o.estado || '') === fe)
     .filter(o => `${o.cons || ''} ${o.herr} ${o.sol} ${o.ind} ${o.cc}`.toLowerCase().includes(q));
 
   $('#orders-count').textContent = `${rows.length} de ${base.length}`;
@@ -1692,6 +1712,7 @@ document.addEventListener('click', e => {
 
 $('#order-search').addEventListener('input', debounce(renderOrders, 200));
 $('#order-status').addEventListener('change', renderOrders);
+$('#order-estado').addEventListener('change', renderOrders);
 $('#report-search').addEventListener('input', debounce(renderReports, 200));
 $('#report-op').addEventListener('change', renderReports);
 $('#report-estado').addEventListener('change', renderReports);
