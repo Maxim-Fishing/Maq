@@ -481,10 +481,10 @@
             </div>
           </article>
           <article class="card" style="margin-top:18px">
-            <div class="card-title">Costos y variables</div>
+            <div class="card-title">Costos y variables <span id="config-badge" class="pill" style="margin-left:8px"></span></div>
             <div class="card-body">
-              <p class="muted" style="margin:0 0 8px">Aquí podrás editar, sin abrir Excel: el valor de hora por tornero, el valor por máquina (torno/fresa/sierra), los precios de material y demás variables con las que se calculan los costos.</p>
-              <p class="notice" style="margin:0">Edición en preparación: requiere habilitar la escritura hacia el libro BALANCE. Lo activamos en el siguiente paso.</p>
+              <p class="muted" style="margin:0 0 10px">Tarifas con las que se calculan los costos del maquinado (leídas del libro BALANCE): valor por hora de cada tornero, costo por hora de máquinas (torno/fresa/sierra), arriendo y precios de material.</p>
+              <div id="config-vars"><p class="muted">Cargando variables…</p></div>
             </div>
           </article>
         </section>
@@ -559,7 +559,8 @@ const state = {
   operators: [],    // Nombres para el login
   requesters: [],
   requests: [],
-  activity: []
+  activity: [],
+  configVars: null  // Variables de costo del BALANCE: {_sheets, personal, material, energia}
 };
 // Consecutivos que ya tienen al menos un reporte
 let REPORTED = new Set();
@@ -647,6 +648,239 @@ async function fetchCosts(force) {
     }
   } catch (e) { /* silencioso: queda la muestra embebida */ }
   finally { costsLoading = false; renderCosts(); }
+}
+
+/* ---------- Variables de costo (Configuración) ---------- */
+let configLoaded = false, configLoading = false;
+async function fetchConfig(force) {
+  const url = liveUrl();
+  const host = $('#config-vars');
+  if (!url) { if (host) host.innerHTML = '<p class="notice">Sin conexión en vivo: las variables se leen del libro BALANCE, que sólo está disponible con el Web App conectado.</p>'; return; }
+  if (configLoading || (configLoaded && !force)) return;
+  configLoading = true; renderConfigVars();
+  try {
+    const sep = url.includes('?') ? '&' : '?';
+    const res = await fetch(url + sep + 'action=config', { method:'GET' });
+    const data = await res.json();
+    if (data && data.config) { state.configVars = data.config; configLoaded = true; }
+  } catch (e) { if (host) host.innerHTML = '<p class="notice error">No se pudieron leer las variables: ' + esc(e.message) + '</p>'; }
+  finally { configLoading = false; renderConfigVars(); }
+}
+
+/* Editor de variables de costo. Cada hoja del libro BALANCE se describe con las
+   columnas (1-based en Google Sheets) que son ENTRADAS editables; las demás son
+   fórmulas ARRAYFORMULA que se calculan solas y quedan bloqueadas. Además, dentro
+   de una columna editable, cualquier celda que tenga su propia fórmula (p.ej. los
+   precios interpolados de aluminio/bronce/teflón) también se bloquea. */
+const CONFIG_DEF = {
+  personal: {
+    sheet: 'PERSONAL', title: 'Personal · torneros y operadores', dataStart: 2,
+    cols: [
+      { col:1, label:'Nombre', kind:'text' },
+      { col:2, label:'Correo', kind:'text' },
+      { col:3, label:'Salario mes ($)', kind:'money' },
+      { col:6, label:'Bonos ($)', kind:'money' },
+      { col:8, label:'Total mes ($)', kind:'calc' },
+      { col:9, label:'Costo $/min', kind:'calc' }
+    ],
+    nameCol: 1,
+    add: { label:'Añadir personal', title:'Añadir personal', fields:[
+      { col:1, label:'Nombre completo', type:'text', required:true },
+      { col:2, label:'Correo', type:'email' },
+      { col:3, label:'Salario mensual ($)', type:'number', required:true },
+      { col:6, label:'Bonos ($)', type:'number' }
+    ] }
+  },
+  energia: {
+    sheet: 'ENERGIA & ARRIENDO', title: 'Máquinas · torno, fresa y arriendo', dataStart: 3,
+    cols: [
+      { col:1, label:'Unidad', kind:'text' },
+      { col:2, label:'$/KWh', kind:'money' },
+      { col:3, label:'Potencia (HP)', kind:'num' },
+      { col:6, label:'Valor equipo ($)', kind:'money' },
+      { col:8, label:'Valor mtto ($)', kind:'money' },
+      { col:12, label:'Costo $/hora', kind:'calc' },
+      { col:13, label:'Costo $/min', kind:'calc' }
+    ],
+    nameCol: 1,
+    add: { label:'Añadir máquina', title:'Añadir torno / fresa', fields:[
+      { col:1, label:'Nombre (ej. TORNO 3)', type:'text', required:true },
+      { col:2, label:'Costo energético ($/KWh)', type:'number', required:true, def:500 },
+      { col:3, label:'Potencia (HP)', type:'number', required:true },
+      { col:6, label:'Valor del equipo ($)', type:'number', required:true },
+      { col:8, label:'Valor mantenimiento ($)', type:'number', required:true }
+    ] }
+  },
+  material: {
+    sheet: 'MATERIAL', title: 'Material · precio por cm según diámetro', dataStart: 1,
+    cols: [
+      { col:1, label:'Diám. (in)', kind:'calc' },
+      { col:2, label:'mm', kind:'calc' },
+      { col:3, label:'4140', kind:'money' },
+      { col:4, label:'4340', kind:'money' },
+      { col:5, label:'Inoxidable', kind:'money' },
+      { col:6, label:'Aluminio', kind:'money' },
+      { col:7, label:'Bronce', kind:'money' },
+      { col:8, label:'Teflón', kind:'money' }
+    ]
+  }
+};
+
+let configDirty = {};  // { 'HOJA!fila!col': {sheet,row,col,value,label} }
+const cv_ = x => (x == null ? '' : String(x)).trim();
+const numFromDisplay = s => { const n = parseFloat(String(s == null ? '' : s).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? '' : n; };
+
+function cfgCell(def, row, fx, c, sheetRow) {
+  const raw = row[c.col - 1] != null ? row[c.col - 1] : '';
+  const hasFx = cv_(fx[c.col - 1]) !== '';
+  if (c.kind === 'calc' || hasFx) {
+    return `<td class="cfg-calc" title="${hasFx ? 'Calculado automáticamente' : 'Sólo lectura'}">${esc(raw) || '—'}</td>`;
+  }
+  const attrs = `data-cfg data-sheet="${esc(def.sheet)}" data-row="${sheetRow}" data-col="${c.col}" data-kind="${c.kind}"`;
+  if (c.kind === 'text') return `<td><input class="cfg-inp" type="text" value="${esc(raw)}" ${attrs}></td>`;
+  const num = numFromDisplay(raw);
+  return `<td><input class="cfg-inp cfg-num" type="number" step="any" value="${num === '' ? '' : num}" ${attrs}></td>`;
+}
+
+function renderConfigTable(key, grid) {
+  const def = CONFIG_DEF[key];
+  if (!grid || grid.missing) return `<p class="notice">No se encontró la hoja «${esc(def.sheet)}» en el libro.</p>`;
+  const head = def.cols.map(c => `<th>${esc(c.label)}${c.kind === 'calc' ? ' <span class="cfg-lock">🔒</span>' : ''}</th>`).join('');
+  let body = '';
+  for (let i = def.dataStart; i < (grid.rows || []).length; i++) {
+    const row = grid.rows[i], fx = (grid.rowsFx && grid.rowsFx[i]) || [];
+    if (def.cols.every(c => cv_(row[c.col - 1]) === '')) continue;   // fila vacía al final
+    const sheetRow = i + 2;                                          // rows[0] = fila 2 de la hoja
+    body += `<tr>${def.cols.map(c => cfgCell(def, row, fx, c, sheetRow)).join('')}</tr>`;
+  }
+  const addBtn = def.add ? `<button class="secondary" data-action="cfg-add" data-key="${key}" style="margin-top:10px">＋ ${esc(def.add.label)}</button>` : '';
+  return `<div class="table-wrap"><table class="cfg-table"><thead><tr>${head}</tr></thead><tbody>${body || `<tr><td colspan="${def.cols.length}" class="muted">Sin filas</td></tr>`}</tbody></table></div>${addBtn}`;
+}
+
+function renderConfigVars() {
+  const host = $('#config-vars'); if (!host) return;
+  const badge = $('#config-badge');
+  if (configLoading) { host.innerHTML = '<p class="muted">Cargando variables…</p>'; if (badge) badge.textContent = ''; return; }
+  const cfg = state.configVars;
+  if (!cfg) {
+    if (badge) badge.textContent = '';
+    host.innerHTML = liveUrl()
+      ? '<p class="notice">No se pudieron leer las variables. Usa «Actualizar» o reintenta abrir esta pestaña.</p>'
+      : '<p class="notice">Sin conexión en vivo: las variables se leen del libro BALANCE mediante el Web App.</p>';
+    return;
+  }
+  configDirty = {};
+  if (badge) { badge.textContent = 'editable'; badge.className = 'pill closed'; }
+  host.innerHTML = `
+    <style>
+      .cfg-table input.cfg-inp{width:100%;min-width:88px;padding:5px 7px;border:1px solid var(--line,#d7dbe0);border-radius:6px;font:inherit;background:#fff}
+      .cfg-table input.cfg-num{text-align:right}
+      .cfg-table input.cfg-inp:focus{outline:2px solid #ff6b00;border-color:#ff6b00}
+      .cfg-table input.cfg-changed{border-color:#ff6b00;background:#fff7f0}
+      .cfg-table td.cfg-calc{color:#8a929c;text-align:right;white-space:nowrap}
+      .cfg-lock{opacity:.5;font-size:.85em}
+      .cfg-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 14px}
+    </style>
+    <div class="cfg-toolbar">
+      <button class="primary" id="cfg-save" data-action="cfg-save" disabled><span class="btn-label">Sin cambios</span></button>
+      <span class="muted">Edita los campos y pulsa guardar. Las columnas con 🔒 se calculan solas.</span>
+    </div>
+    <div class="config-block"><h4 style="margin:0 0 6px">${esc(CONFIG_DEF.personal.title)}</h4>${renderConfigTable('personal', cfg.personal)}</div>
+    <div class="config-block" style="margin-top:18px"><h4 style="margin:0 0 6px">${esc(CONFIG_DEF.energia.title)}</h4>${renderConfigTable('energia', cfg.energia)}</div>
+    <div class="config-block" style="margin-top:18px"><h4 style="margin:0 0 6px">${esc(CONFIG_DEF.material.title)}</h4>${renderConfigTable('material', cfg.material)}</div>
+    <details style="margin:16px 0 0"><summary class="muted" style="cursor:pointer">Pestañas del libro BALANCE (${(cfg._sheets||[]).length})</summary><p class="muted" style="margin:6px 0 0">${esc((cfg._sheets||[]).join(' · '))}</p></details>`;
+  host.oninput = onCfgInput;
+  updateDirtyUI();
+}
+
+function onCfgInput(e) {
+  const el = e.target.closest('.cfg-inp'); if (!el) return;
+  const sheet = el.dataset.sheet, row = +el.dataset.row, col = +el.dataset.col, kind = el.dataset.kind;
+  const key = sheet + '!' + row + '!' + col;
+  let value;
+  if (kind === 'text') { value = el.value; }
+  else { if (el.value === '') { value = ''; } else { value = parseFloat(el.value); if (isNaN(value)) return; } }
+  configDirty[key] = { sheet, row, col, value };
+  el.classList.add('cfg-changed');
+  updateDirtyUI();
+}
+
+function cfgDirtyCount() { return Object.keys(configDirty).length; }
+function updateDirtyUI() {
+  const n = cfgDirtyCount(), b = $('#cfg-save'); if (!b) return;
+  b.disabled = !n;
+  b.querySelector('.btn-label').textContent = n ? `Guardar ${n} cambio(s)` : 'Sin cambios';
+}
+
+async function postConfig(body) {
+  const url = liveUrl();
+  if (!url) throw new Error('Sin conexión en vivo.');
+  const res = await fetch(url, { method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' }, body: JSON.stringify(body) });
+  const data = await res.json();
+  if (!data || !data.ok) throw new Error((data && data.error) || 'Respuesta inesperada del servidor.');
+  return data;
+}
+
+function saveConfig() {
+  const edits = Object.keys(configDirty).map(k => configDirty[k]);
+  if (!edits.length) return;
+  confirmDialog(`Vas a guardar ${edits.length} cambio(s) en las tarifas reales del libro BALANCE. Esto afecta el cálculo de costos de los próximos trabajos. ¿Continuar?`, async () => {
+    const btn = $('#cfg-save'); if (!btn) return;
+    await withLoading(btn, 'Guardando…', async () => {
+      try {
+        const r = await postConfig({ formType:'config-set', edits: edits.map(e => ({ sheet:e.sheet, row:e.row, col:e.col, value:e.value })) });
+        configDirty = {};
+        toast(`Guardado (${r.applied} celda(s)).`);
+        await fetchConfig(true);   // relee para mostrar los valores recalculados
+      } catch (e) { toast('No se pudo guardar: ' + e.message, 'error'); }
+    });
+  });
+}
+
+function cfgTargetRow(grid, def) {
+  for (let i = def.dataStart; i < (grid.rows || []).length; i++) {
+    if (cv_(grid.rows[i][def.nameCol - 1]) === '') return i + 2;    // primera fila vacía
+  }
+  return (grid.lastRow || (grid.rows.length + 1)) + 1;               // o al final
+}
+
+function openAddConfig(key) {
+  const def = CONFIG_DEF[key]; if (!def || !def.add) return;
+  const fields = def.add.fields.map(f => `
+    <div class="field ${f.type === 'text' && f.col === 1 ? 'full' : ''}">
+      <label for="cfg-f-${f.col}">${esc(f.label)}</label>
+      <input id="cfg-f-${f.col}" name="c${f.col}" type="${f.type}" ${f.required ? 'required' : ''} value="${f.def != null ? f.def : ''}" ${f.type === 'number' ? 'step="any"' : ''}>
+      <span class="error-msg" data-error-for="c${f.col}"></span>
+    </div>`).join('');
+  modal(def.add.title,
+    `<form id="cfg-add-form" class="form" novalidate><div class="form-grid">${fields}
+       <p class="notice field full">Se agrega al final de la tabla; las columnas calculadas (costo por hora, $/min…) se llenan solas.</p>
+     </div></form>`,
+    `<button class="secondary" data-close>Cancelar</button>
+     <button class="primary" data-submit form="cfg-add-form"><span class="btn-label">${esc(def.add.label)}</span></button>`);
+  $('#cfg-add-form').addEventListener('submit', e => submitAddConfig(e, key));
+}
+
+async function submitAddConfig(e, key) {
+  e.preventDefault();
+  const form = e.target, def = CONFIG_DEF[key];
+  if (!validateForm(form)) return toast('Revisa los campos marcados.', 'error');
+  const grid = state.configVars[key];
+  const targetRow = cfgTargetRow(grid, def);
+  const edits = def.add.fields.map(f => {
+    let v = form.elements['c' + f.col].value;
+    if (f.type === 'number') { v = v === '' ? '' : parseFloat(v); if (v !== '' && isNaN(v)) v = ''; }
+    return { sheet: def.sheet, row: targetRow, col: f.col, value: v };
+  }).filter(ed => ed.value !== '');
+  const btn = document.querySelector('#modal-root [data-submit]');
+  await withLoading(btn, 'Guardando…', async () => {
+    try {
+      await postConfig({ formType:'config-set', edits });
+      closeModal();
+      toast('Agregado correctamente.');
+      await fetchConfig(true);
+    } catch (err) { toast('No se pudo agregar: ' + err.message, 'error'); }
+  });
 }
 
 /* ---------- API ---------- */
@@ -1004,6 +1238,7 @@ function show(view) {
   });
   $('#page-title').textContent = VIEW_TITLES[view];
   if (view === 'costs') fetchCosts();
+  if (view === 'users') fetchConfig();
 }
 
 /* ---------- Formularios ---------- */
@@ -1450,6 +1685,8 @@ document.addEventListener('click', e => {
     if (t.dataset.action === 'approve') approveRequest(id);
     if (t.dataset.action === 'reject') rejectRequest(id);
     if (t.dataset.action === 'toggle-user') toggleUser(+idx);
+    if (t.dataset.action === 'cfg-save') saveConfig();
+    if (t.dataset.action === 'cfg-add') openAddConfig(t.dataset.key);
   }
 });
 
