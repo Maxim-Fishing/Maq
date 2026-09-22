@@ -121,6 +121,7 @@
   .seg{display:inline-flex;gap:4px;background:#eef0f3;border-radius:10px;padding:4px}
   .seg-btn{background:transparent;border:0;padding:8px 18px;border-radius:8px;font:inherit;font-weight:700;color:#555c66;cursor:pointer}
   .seg-btn.active{background:#fff;color:#111318;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+  table.mini td.num, table.mini th.num{text-align:right;white-space:nowrap}
   .filters input,.filters select{height:39px;border:1px solid #d9dee5;border-radius:var(--r-sm);padding:0 11px;background:#fff;font:inherit}
   .filters input{min-width:250px;flex:1}
   .filters input:focus,.filters select:focus{border-color:var(--orange);box-shadow:0 0 0 3px #fff0e5;outline:none}
@@ -375,6 +376,7 @@
           <div class="view-head">
             <div><h2>Costos por mes</h2><p>Análisis de costos de maquinado. <span id="costs-src" class="muted"></span></p></div>
             <div class="actions">
+              <button class="primary" data-action="sim-open">🧮 Simulación</button>
               <label for="costs-month" class="muted" style="align-self:center;font-weight:700">Mes</label>
               <select id="costs-month" aria-label="Seleccionar mes"></select>
             </div>
@@ -1073,6 +1075,194 @@ function render() {
 }
 
 const money = n => '$' + Math.round(n || 0).toLocaleString('es-CO');
+
+/* ================= MOTOR DE COSTOS (réplica exacta de GESTIONGASTOS del BALANCE) =========
+   Tarifas desde state.configVars (mismas hojas/columnas que usa el script):
+   - Máquina: ENERGIA & ARRIENDO col L = TOTAL HORA ($/h); ARRIENDO TALLER = arriendo/h
+   - Material: matriz[`${tipo}|${diámetro mm}`] = $/cm (× longitud cm)
+   - Operario: PERSONAL col I = TOTAL ($/min)
+   Por parte: cMat=precio×long; cTorno=(Σ6 tiempos h)×$hMáquina; cFresa=hFresa×$hFresa;
+   cMO=(hTorno+hFresa)×60×$minOperario; cArriendo=(hTorno+hFresa)×$hArriendo; total=suma. */
+function durHoras(v) {
+  if (!v) return 0;
+  const s = String(v).trim();
+  if (s.indexOf(':') >= 0) { const p = s.split(':'); return (parseFloat(p[0])||0) + (parseFloat(p[1])||0)/60 + (parseFloat(p[2])||0)/3600; }
+  const n = parseFloat(s); return isNaN(n) ? 0 : n;
+}
+function costRates() {
+  const cfg = state.configVars; if (!cfg) return null;
+  const maq = {}; let arriendo = 0;
+  ((cfg.energia && cfg.energia.rows) || []).forEach(r => {
+    const name = cv_(r[0]); if (!name) return;
+    const hora = +numFromDisplay(r[11]) || 0;                 // col L = TOTAL HORA $/h
+    maq[name] = hora;
+    if (name.toUpperCase().indexOf('ARRIENDO') === 0) arriendo = hora;
+  });
+  // MATERIAL: readGrid devuelve header=fila1 (título); los tipos están en rows[0]=fila2
+  // (DIAM in, DIAM mm, 4140, 4340, INOX, ALUMINIO, BRONCE, TEFLON) y los datos en rows[1..].
+  const matRows = (cfg.material && cfg.material.rows) || [];
+  const tipos = (matRows[0] || []).slice(2).map(cv_);         // nombres de material
+  const dnorm = s => { const n = parseFloat(String(s == null ? '' : s).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? '' : String(Math.round(n * 100) / 100); };
+  const mat = {};
+  const diametros = [];
+  matRows.slice(1).forEach(r => {
+    const mm = dnorm(r[1]); if (!mm || mm === '0') return;     // col B = diámetro mm (numérico)
+    diametros.push({ mm, pulg: cv_(r[0]) });
+    tipos.forEach((t, i) => { if (t) mat[`${t}|${mm}`] = +numFromDisplay(r[2 + i]) || 0; });
+  });
+  const per = {};
+  ((cfg.personal && cfg.personal.rows) || []).forEach(r => { const n = cv_(r[0]); if (n) per[n] = +numFromDisplay(r[8]) || 0; });
+  return { maq, arriendo, mat, per, tipos: tipos.filter(Boolean), diametros, dnorm };
+}
+function costParte(rates, x) {
+  const cMat = (rates.mat[`${cv_(x.material)}|${rates.dnorm(x.diam)}`] || 0) * (parseFloat(x.long) || 0);
+  let hTorno = 0; (x.tiemposTorno || []).forEach(t => hTorno += durHoras(t));
+  const cTorno = hTorno * (rates.maq[cv_(x.torno)] || 0);
+  const hFresa = durHoras(x.tFresa);
+  const cFresa = hFresa * (rates.maq[cv_(x.fresa)] || 0);
+  const cMO = (hTorno + hFresa) * 60 * (rates.per[cv_(x.operador)] || 0);
+  const cArr = (hTorno + hFresa) * rates.arriendo;
+  return { cMat, cTorno, cFresa, cMO, cArr, horas: hTorno + hFresa, total: cMat + cTorno + cFresa + cMO + cArr };
+}
+// Costo total de una orden = suma de las partes de sus reportes (no rechazados). Usa tarifas ACTUALES.
+function orderCost(cons) {
+  const rates = costRates(); if (!rates) return null;
+  const code = otCode(cons);
+  const reps = state.reports.filter(r => otCode(r.cons) === code && !/rechaz/i.test(r.estado || ''));
+  const acc = { cMat:0, cTorno:0, cFresa:0, cMO:0, cArr:0, horas:0, total:0, partes:0, reportes:reps.length };
+  reps.forEach(r => (r.partes || []).forEach(p => {
+    const c = costParte(rates, {
+      material: p.ref, diam: p.diam, long: p.long, torno: p.torno,
+      tiemposTorno: [p.tTorno, p.perf, p.mand, p.acab, p.pin, p.box],
+      fresa: p.fresa, tFresa: p.tFresa, operador: r.op
+    });
+    acc.cMat+=c.cMat; acc.cTorno+=c.cTorno; acc.cFresa+=c.cFresa; acc.cMO+=c.cMO; acc.cArr+=c.cArr; acc.horas+=c.horas; acc.total+=c.total; acc.partes++;
+  }));
+  return acc;
+}
+function orderCostHtml(cons) {
+  if (!state.configVars) return `<div class="dl-row" style="margin-top:8px"><span>Costo total de la orden</span><b class="muted">Abre el panel Costos para cargar las tarifas y reábrela</b></div>`;
+  const c = orderCost(cons); if (!c) return '';
+  return `<div class="section-label">Costo de la orden <span class="muted" style="font-weight:400">· tarifas actuales</span></div>
+    <div class="dl-row"><span>Material</span><b>${money(c.cMat)}</b></div>
+    <div class="dl-row"><span>Torno</span><b>${money(c.cTorno)}</b></div>
+    <div class="dl-row"><span>Fresa</span><b>${money(c.cFresa)}</b></div>
+    <div class="dl-row"><span>Mano de obra</span><b>${money(c.cMO)}</b></div>
+    <div class="dl-row"><span>Arriendo</span><b>${money(c.cArr)}</b></div>
+    <div class="dl-row" style="border-top:2px solid #e5e7eb;margin-top:6px;padding-top:6px"><span><b>COSTO TOTAL</b></span><b style="color:#ff6b00">${money(c.total)}</b></div>`;
+}
+
+/* ---------- Simulación de costos (calculadora + PDF) ---------- */
+let simLast = null, simIdx = 0;
+function simPartFieldset(rates, n) {
+  const opt = (arr, ph) => `<option value="">${esc(ph)}</option>` + arr.map(v => `<option>${esc(v)}</option>`).join('');
+  const diamOpts = `<option value="">Diámetro…</option>` + rates.diametros.map(d => `<option value="${esc(d.mm)}">${esc(d.pulg)}" · ${esc(d.mm)} mm</option>`).join('');
+  const maq = Object.keys(rates.maq);
+  const tornos = maq.filter(m => /TORNO/i.test(m)), fresas = maq.filter(m => /FRESA/i.test(m));
+  return `<fieldset class="sim-part" data-n="${n}" style="border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;margin:0 0 12px">
+    <legend style="font-weight:700;padding:0 6px">Parte ${n}</legend>
+    <div class="form-grid">
+      <div class="field"><label>Operario (tornero)</label><select data-f="operador">${opt(Object.keys(rates.per), 'Selecciona…')}</select></div>
+      <div class="field"><label>Material</label><select data-f="material">${opt(rates.tipos, 'Material…')}</select></div>
+      <div class="field"><label>Diámetro</label><select data-f="diam">${diamOpts}</select></div>
+      <div class="field"><label>Longitud (cm)</label><input type="number" step="any" data-f="long" placeholder="0"></div>
+      <div class="field"><label>Torno</label><select data-f="torno">${opt(tornos, 'Ninguno')}</select></div>
+      <div class="field"><label>Tiempo torno (h:mm:ss)</label><input type="text" data-f="tTorno" placeholder="0:00:00"></div>
+      <div class="field"><label>Fresa</label><select data-f="fresa">${opt(fresas, 'Ninguna')}</select></div>
+      <div class="field"><label>Tiempo fresa (h:mm:ss)</label><input type="text" data-f="tFresa" placeholder="0:00:00"></div>
+    </div>
+  </fieldset>`;
+}
+function openSim() {
+  const rates = costRates();
+  if (!rates) { toast('Cargando tarifas…'); fetchConfig(true).then(() => { if (costRates()) openSim(); }); return; }
+  simIdx = 1; simLast = null;
+  modal('Simulación de costos', `
+    <form id="sim-form" class="form" novalidate>
+      <div class="form-grid">
+        <div class="field full"><label>Nombre de la herramienta</label><input data-h="nombre" placeholder="Ej. PULLING TOOL 2.5"></div>
+        <div class="field"><label>Responsable / solicitante</label><input data-h="resp" placeholder="Opcional"></div>
+      </div>
+      <div id="sim-parts">${simPartFieldset(rates, 1)}</div>
+      <button type="button" class="secondary" data-action="sim-add">＋ Agregar parte / tornero</button>
+      <div id="sim-result" style="margin-top:16px"></div>
+    </form>`,
+    `<button class="secondary" data-close>Cerrar</button>
+     <button type="button" class="secondary" id="sim-pdf" data-action="sim-pdf" style="display:none">⬇ Descargar PDF</button>
+     <button type="button" class="primary" data-action="sim-calc">Calcular</button>`);
+}
+function addSimPart() {
+  const rates = costRates(); if (!rates) return;
+  simIdx++;
+  $('#sim-parts').insertAdjacentHTML('beforeend', simPartFieldset(rates, simIdx));
+}
+function readSim() {
+  const h = s => (document.querySelector(`#sim-form [data-h="${s}"]`) || {}).value || '';
+  const parts = [...document.querySelectorAll('#sim-parts .sim-part')].map(fs => {
+    const v = f => (fs.querySelector(`[data-f="${f}"]`) || {}).value || '';
+    return { operador:v('operador'), material:v('material'), diam:v('diam'), long:v('long'), torno:v('torno'), tTorno:v('tTorno'), fresa:v('fresa'), tFresa:v('tFresa') };
+  });
+  return { nombre:h('nombre'), resp:h('resp'), parts };
+}
+function simCalc() {
+  const rates = costRates(); if (!rates) return;
+  const data = readSim();
+  const rows = data.parts.map((p, i) => ({ n:i+1, p, c: costParte(rates, { ...p, tiemposTorno:[p.tTorno] }) }));
+  const tot = rows.reduce((a, x) => { ['cMat','cTorno','cFresa','cMO','cArr','total','horas'].forEach(k => a[k]=(a[k]||0)+x.c[k]); return a; }, {});
+  simLast = { ...data, rows, tot, fecha: new Date() };
+  const host = $('#sim-result'); if (host) host.innerHTML = simResultHtml(simLast);
+  const pdf = $('#sim-pdf'); if (pdf) pdf.style.display = '';
+}
+function simResultHtml(s) {
+  const filas = s.rows.map(x => `<tr>
+      <td>${x.n}</td><td>${esc(x.p.material || '—')} ${esc(x.p.diam || '')}${x.p.diam?'mm':''}</td>
+      <td class="num">${money(x.c.cMat)}</td><td class="num">${money(x.c.cTorno)}</td><td class="num">${money(x.c.cFresa)}</td>
+      <td class="num">${money(x.c.cMO)}</td><td class="num">${money(x.c.cArr)}</td><td class="num"><b>${money(x.c.total)}</b></td>
+    </tr>`).join('');
+  return `<div class="section-label">Resultado${s.nombre ? ' · ' + esc(s.nombre) : ''}</div>
+    <div class="table-wrap"><table class="mini"><thead><tr><th>#</th><th>Material</th><th class="num">Material</th><th class="num">Torno</th><th class="num">Fresa</th><th class="num">M.O.</th><th class="num">Arriendo</th><th class="num">Total</th></tr></thead>
+    <tbody>${filas}</tbody>
+    <tfoot><tr style="font-weight:700;border-top:2px solid #e5e7eb">
+      <td colspan="2">TOTAL</td><td class="num">${money(s.tot.cMat)}</td><td class="num">${money(s.tot.cTorno)}</td><td class="num">${money(s.tot.cFresa)}</td>
+      <td class="num">${money(s.tot.cMO)}</td><td class="num">${money(s.tot.cArr)}</td><td class="num" style="color:#ff6b00">${money(s.tot.total)}</td>
+    </tr></tfoot></table></div>
+    <p class="muted" style="margin:8px 0 0">Tiempo total: ${s.tot.horas.toFixed(2)} h · calculado con las tarifas actuales del BALANCE.</p>`;
+}
+function simPdf() {
+  if (!simLast) return;
+  const s = simLast;
+  const filas = s.rows.map(x => `<tr>
+    <td>${x.n}</td><td>${esc(x.p.operador||'—')}</td><td>${esc(x.p.material||'—')} · ${esc(x.p.diam||'')} mm · ${esc(x.p.long||'0')} cm</td>
+    <td>${esc(x.p.torno||'—')} ${x.p.tTorno?('· '+esc(x.p.tTorno)):''}${x.p.fresa?(' / '+esc(x.p.fresa)+' '+esc(x.p.tFresa||'')):''}</td>
+    <td style="text-align:right">${money(x.c.total)}</td></tr>`).join('');
+  const w = window.open('', '_blank');
+  if (!w) { toast('Permite las ventanas emergentes para descargar el PDF.', 'error'); return; }
+  w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Simulación ${esc(s.nombre||'')}</title>
+    <style>body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:32px}h1{color:#ff6b00;margin:0 0 4px;font-size:22px}
+    .sub{color:#555;margin:0 0 16px}table{width:100%;border-collapse:collapse;margin:10px 0}
+    th,td{border:1px solid #ddd;padding:7px 9px;font-size:13px;text-align:left}th{background:#111318;color:#fff}
+    .tot td{border:0;padding:4px 9px;text-align:right}.grand{font-size:18px;color:#ff6b00;font-weight:700}
+    .box{margin-top:14px;border:1px solid #eee;border-radius:8px;padding:12px;max-width:340px;margin-left:auto}</style></head>
+    <body>
+      <h1>MAXIM · Simulación de costo de maquinado</h1>
+      <p class="sub">${esc(s.nombre||'Herramienta sin nombre')}${s.resp?(' — '+esc(s.resp)):''} · ${s.fecha.toLocaleDateString('es-CO')}</p>
+      <table><thead><tr><th>#</th><th>Operario</th><th>Material / medidas</th><th>Máquina · tiempo</th><th style="text-align:right">Costo</th></tr></thead><tbody>${filas}</tbody></table>
+      <div class="box">
+        <table class="tot">
+          <tr><td>Material</td><td>${money(s.tot.cMat)}</td></tr>
+          <tr><td>Torno</td><td>${money(s.tot.cTorno)}</td></tr>
+          <tr><td>Fresa</td><td>${money(s.tot.cFresa)}</td></tr>
+          <tr><td>Mano de obra</td><td>${money(s.tot.cMO)}</td></tr>
+          <tr><td>Arriendo</td><td>${money(s.tot.cArr)}</td></tr>
+          <tr><td class="grand">TOTAL</td><td class="grand">${money(s.tot.total)}</td></tr>
+        </table>
+      </div>
+      <p style="color:#888;font-size:11px;margin-top:24px">Cálculo con tarifas vigentes del libro BALANCE. Valor estimado de referencia.</p>
+      <script>window.onload=function(){window.print();}<\/script>
+    </body></html>`);
+  w.document.close();
+}
+
 function costCard(titulo, header, rows) {
   return `<article class="card"><div class="card-title">${esc(titulo)}</div><div class="table-wrap">
     <table class="mini"><thead><tr>${header.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
@@ -1275,7 +1465,7 @@ function show(view) {
     if (active) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current');
   });
   $('#page-title').textContent = VIEW_TITLES[view];
-  if (view === 'costs') fetchCosts();
+  if (view === 'costs') { fetchCosts(); fetchConfig(); }
   if (view === 'users') fetchConfig();
 }
 
@@ -1477,7 +1667,7 @@ function openOrder(idx, src) {
                <td><button class="secondary" data-action="open-report" data-idx="${state.reports.indexOf(r)}">Ver</button></td>
              </tr>`).join('')}</tbody></table>`
           : `<p class="muted">Aún no hay reportes registrados para esta orden.</p>`}
-       <div id="order-cost" class="dl-row" style="margin-top:8px"><span>Costo total de la orden</span><b class="muted">se calcula con el motor de costos (próxima entrega)</b></div>`
+       ${orderCostHtml(o.cons)}`
     : '';
 
   modal(`${o.cons ? esc(o.cons) + ' · ' : ''}${esc(o.herr || 'Orden de trabajo')}`, `
@@ -1719,6 +1909,7 @@ function start() {
     render();
     show(visible[0]);
     startLive();
+    if (role === 'Administrador') fetchConfig();   // precarga tarifas para costo de órdenes y simulación
   }, 200);
 }
 
@@ -1747,6 +1938,10 @@ document.addEventListener('click', e => {
     if (t.dataset.action === 'cfg-save') saveConfig();
     if (t.dataset.action === 'cfg-add') openAddConfig(t.dataset.key);
     if (t.dataset.action === 'appr-tab') { state.apprTab = t.dataset.tab; renderApprovals(); }
+    if (t.dataset.action === 'sim-open') openSim();
+    if (t.dataset.action === 'sim-add') addSimPart();
+    if (t.dataset.action === 'sim-calc') simCalc();
+    if (t.dataset.action === 'sim-pdf') simPdf();
   }
 });
 
