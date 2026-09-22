@@ -1687,7 +1687,61 @@ function openOrder(idx, src) {
       ${partes}
       ${reportesHtml}
     </div>`,
-    `<button class="secondary" data-close>Cerrar</button>`);
+    (() => {
+      const isAdmin = state.user.role === 'Administrador';
+      const canClose = src === 'ot' && isAdmin && /abierta/i.test(o.estado || '');
+      const canEditSol = src === 'sol' && (isAdmin || state.user.role === 'Solicitante') && /pendiente/i.test(o.estado || '');
+      return `${canClose ? `<button class="danger" data-action="close-order" data-cons="${esc(o.cons)}">Cerrar orden</button>` : ''}
+        ${canEditSol ? `<button class="primary" data-action="edit-sol" data-idx="${idx}">Editar solicitud</button>` : ''}
+        <button class="secondary" data-close>Cerrar</button>`;
+    })());
+}
+
+// Cerrar orden (solo jefe de maquinado / administrador). Mueve la OT a Cerrada en el backend.
+function closeOrder(cons) {
+  confirmDialog(`¿Cerrar la orden ${cons}? Quedará como Cerrada y los operadores ya no podrán registrar trabajo en ella.`, async () => {
+    try {
+      await postConfig({ formType:'close-order', cons });
+      toast(`Orden ${cons} cerrada.`);
+      closeModal();
+      await refreshLive(true);
+    } catch (e) { toast('No se pudo cerrar: ' + e.message, 'error'); }
+  });
+}
+
+// Editar solicitud (solo si está Pendiente).
+function editSolModal(idx) {
+  const s = state.solicitudes[idx]; if (!s) return;
+  const tipos = ['Desarrollo especial','Salida a campo','Reabastecimiento de inventario','Cubrimientos'];
+  modal('Editar solicitud', `
+    <form id="edit-sol-form" class="form" novalidate>
+      <div class="form-grid">
+        <div class="field full"><label>Herramienta</label><input name="herr" value="${esc(s.herr||'')}"></div>
+        <div class="field"><label>Tipo de OT</label><select name="tipo">${tipos.map(t=>`<option${t===s.tipo?' selected':''}>${esc(t)}</option>`).join('')}</select></div>
+        <div class="field"><label>Tipo de trabajo</label><input name="trab" value="${esc(s.trab||'')}"></div>
+        <div class="field"><label>Centro de costos</label><input name="cc" value="${esc(s.cc||'')}"></div>
+        <div class="field"><label>Código de herramienta</label><input name="cod" value="${esc(s.cod||'')}"></div>
+        <div class="field"><label>Fecha requerida</label><input type="date" name="entrega" value="${esc(s.entrega||'')}"></div>
+        <div class="field full"><label>Indicaciones</label><textarea name="ind" rows="3">${esc(s.ind||'')}</textarea></div>
+      </div>
+    </form>`,
+    `<button class="secondary" data-close>Cancelar</button>
+     <button class="primary" data-submit form="edit-sol-form"><span class="btn-label">Guardar cambios</span></button>`);
+  $('#edit-sol-form').addEventListener('submit', e => submitEditSol(e, idx));
+}
+async function submitEditSol(e, idx) {
+  e.preventDefault();
+  const s = state.solicitudes[idx]; if (!s) return;
+  const fields = Object.fromEntries(new FormData(e.target));
+  const btn = document.querySelector('#modal-root [data-submit]');
+  await withLoading(btn, 'Guardando…', async () => {
+    try {
+      await postConfig({ formType:'edit-solicitud', uuid: s.uuid, fields });
+      closeModal();
+      toast('Solicitud actualizada.');
+      await refreshLive(true);
+    } catch (err) { toast('No se pudo guardar: ' + err.message, 'error'); }
+  });
 }
 
 function openReport(idx) {
@@ -1942,6 +1996,8 @@ document.addEventListener('click', e => {
     if (t.dataset.action === 'sim-add') addSimPart();
     if (t.dataset.action === 'sim-calc') simCalc();
     if (t.dataset.action === 'sim-pdf') simPdf();
+    if (t.dataset.action === 'close-order') closeOrder(t.dataset.cons);
+    if (t.dataset.action === 'edit-sol') editSolModal(+t.dataset.idx);
   }
 });
 
