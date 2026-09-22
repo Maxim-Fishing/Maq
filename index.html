@@ -118,6 +118,9 @@
 
   /* ---------- Filters ---------- */
   .filters{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+  .seg{display:inline-flex;gap:4px;background:#eef0f3;border-radius:10px;padding:4px}
+  .seg-btn{background:transparent;border:0;padding:8px 18px;border-radius:8px;font:inherit;font-weight:700;color:#555c66;cursor:pointer}
+  .seg-btn.active{background:#fff;color:#111318;box-shadow:0 1px 3px rgba(0,0,0,.12)}
   .filters input,.filters select{height:39px;border:1px solid #d9dee5;border-radius:var(--r-sm);padding:0 11px;background:#fff;font:inherit}
   .filters input{min-width:250px;flex:1}
   .filters input:focus,.filters select:focus{border-color:var(--orange);box-shadow:0 0 0 3px #fff0e5;outline:none}
@@ -425,15 +428,21 @@
         </section>
 
         <section id="approvals" class="view">
-          <div class="view-head"><div><h2>Aprobaciones</h2><p>Solicitudes de OT y trabajos de maquinado pendientes de decisión.</p></div></div>
-          <article class="card">
-            <div class="card-title">Solicitudes por aprobar <span id="appr-sol-count" class="muted"></span></div>
+          <div class="view-head">
+            <div><h2>Aprobaciones</h2><p>Elige qué quieres revisar: solicitudes de OT o trabajos de maquinado.</p></div>
+          </div>
+          <div class="seg" role="tablist" style="margin:0 0 16px">
+            <button class="seg-btn" data-action="appr-tab" data-tab="sol">Solicitudes <span id="appr-sol-count" class="muted"></span></button>
+            <button class="seg-btn" data-action="appr-tab" data-tab="rep">Trabajos <span id="appr-rep-count" class="muted"></span></button>
+          </div>
+          <article class="card" id="appr-card-sol">
+            <div class="card-title">Solicitudes por aprobar</div>
             <div class="table-wrap">
               <table><thead><tr><th>Solicitante</th><th>Herramienta</th><th>Tipo</th><th>Requerida</th><th>Acción</th></tr></thead><tbody id="approvals-sol-table"></tbody></table>
             </div>
           </article>
-          <article class="card" style="margin-top:18px">
-            <div class="card-title">Trabajos por aprobar <span id="appr-rep-count" class="muted"></span></div>
+          <article class="card" id="appr-card-rep">
+            <div class="card-title">Trabajos por aprobar</div>
             <div class="table-wrap">
               <table><thead><tr><th>Consecutivo</th><th>Detalle</th><th>Operador</th><th>Estado</th><th>Acción</th></tr></thead><tbody id="approvals-table"></tbody></table>
             </div>
@@ -563,7 +572,8 @@ const state = {
   requesters: [],
   requests: [],
   activity: [],
-  configVars: null  // Variables de costo del BALANCE: {_sheets, personal, material, energia}
+  configVars: null, // Variables de costo del BALANCE: {_sheets, personal, material, energia}
+  apprTab: 'sol'    // Aprobaciones: 'sol' (solicitudes) | 'rep' (trabajos)
 };
 // Consecutivos que ya tienen al menos un reporte
 let REPORTED = new Set();
@@ -1229,6 +1239,13 @@ function renderApprovals() {
         </td>
       </tr>`).join('')
     : `<tr><td colspan="5">${emptyState(iconCheck,'Todo al día','No hay trabajos pendientes de aprobación.')}</td></tr>`;
+
+  // Mostrar solo la lista elegida (solicitudes o trabajos)
+  const tab = state.apprTab || 'sol';
+  const cs = $('#appr-card-sol'), cr = $('#appr-card-rep');
+  if (cs) cs.style.display = tab === 'sol' ? '' : 'none';
+  if (cr) cr.style.display = tab === 'rep' ? '' : 'none';
+  $$('#approvals .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
 }
 
 function renderUsers() {
@@ -1443,6 +1460,26 @@ function openOrder(idx, src) {
        <table class="mini"><thead><tr><th>Cant.</th><th>Parte</th></tr></thead><tbody>
        ${o.partes.map(p => `<tr><td>${esc(p.q || '')}</td><td>${esc(p.n)}</td></tr>`).join('')}</tbody></table>`
     : '';
+
+  // Reportes conectados a esta orden (por consecutivo) — visible para el administrador
+  const linked = (src === 'ot' && o.cons)
+    ? state.reports.filter(r => otCode(r.cons) === otCode(o.cons))
+    : [];
+  const reportesHtml = (src === 'ot' && o.cons)
+    ? `<div class="section-label">Reportes de esta orden (${linked.length})</div>
+       ${linked.length
+          ? `<table class="mini"><thead><tr><th>Operador</th><th>Fecha</th><th>Partes</th><th>Estado</th><th></th></tr></thead><tbody>
+             ${linked.map(r => `<tr>
+               <td>${esc(r.op || '—')}</td>
+               <td>${esc(fmtDate(r.fecha))}</td>
+               <td>${(r.partes || []).length}</td>
+               <td>${statusPill(r.estado === 'Aprobado' ? 'Aprobada' : (r.estado || '—'))}</td>
+               <td><button class="secondary" data-action="open-report" data-idx="${state.reports.indexOf(r)}">Ver</button></td>
+             </tr>`).join('')}</tbody></table>`
+          : `<p class="muted">Aún no hay reportes registrados para esta orden.</p>`}
+       <div id="order-cost" class="dl-row" style="margin-top:8px"><span>Costo total de la orden</span><b class="muted">se calcula con el motor de costos (próxima entrega)</b></div>`
+    : '';
+
   modal(`${o.cons ? esc(o.cons) + ' · ' : ''}${esc(o.herr || 'Orden de trabajo')}`, `
     <div class="form detail">
       ${dl('Consecutivo', o.cons)}
@@ -1458,6 +1495,7 @@ function openOrder(idx, src) {
       ${dl('Fecha requerida', fmtDate(o.entrega))}
       ${o.ind ? `<div class="dl-block"><span>Indicaciones del cliente</span><p>${esc(o.ind)}</p></div>` : ''}
       ${partes}
+      ${reportesHtml}
     </div>`,
     `<button class="secondary" data-close>Cerrar</button>`);
 }
@@ -1708,6 +1746,7 @@ document.addEventListener('click', e => {
     if (t.dataset.action === 'toggle-user') toggleUser(+idx);
     if (t.dataset.action === 'cfg-save') saveConfig();
     if (t.dataset.action === 'cfg-add') openAddConfig(t.dataset.key);
+    if (t.dataset.action === 'appr-tab') { state.apprTab = t.dataset.tab; renderApprovals(); }
   }
 });
 
