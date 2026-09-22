@@ -1137,11 +1137,12 @@ function renderOrders() {
   const rows = base
     .filter(o => !f || o.tipo === f)
     .filter(o => !fe || (o.estado || '') === fe)
-    .filter(o => `${o.cons || ''} ${o.herr} ${o.sol} ${o.ind} ${o.cc}`.toLowerCase().includes(q));
+    .filter(o => `${o.cons || ''} ${o.herr} ${o.sol} ${o.ind} ${o.cc}`.toLowerCase().includes(q))
+    .sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));   // recientes primero (mezcla abiertas y cerradas)
 
   $('#orders-count').textContent = `${rows.length} de ${base.length}`;
   $('#orders-table').innerHTML = rows.length
-    ? rows.slice(0,400).map(o => `
+    ? rows.slice(0,1000).map(o => `
       <tr>
         <td data-label="Consecutivo">${o.cons ? `<b>${esc(o.cons)}</b>` : `<span class="muted">${esc(fmtDate(o.fecha))}</span>`}</td>
         <td data-label="Herramienta" class="subject">${esc(o.herr || '—')}</td>
