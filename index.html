@@ -1537,12 +1537,11 @@ async function submitRequest(e) {
     name: r.querySelector('[name=partName]').value
   }));
   const payload = Object.fromEntries(new FormData(form));
-  payload.parts = parts;
+  const partes = parts.map(p => ({ q: String(p.quantity), n: p.name }));
 
   await withLoading(btn, 'Enviando…', async () => {
     try {
-      await api('createRequest', payload);
-      state.ot.unshift({
+      const local = {
         fecha: today(),
         correo: payload.email || '',
         sol: payload.requester || state.user.name,
@@ -1552,14 +1551,34 @@ async function submitRequest(e) {
         cod: payload.toolCode || '',
         trab: '',
         ind: payload.notes || '',
-        partes: parts.map(p => ({ q: String(p.quantity), n: p.name })),
-        entrega: payload.dueDate || ''
-      });
-      state.requests.unshift({ id: uid('SOL'), detail: payload.notes, due: payload.dueDate, status: 'Pendiente' });
-      closeModal();
-      render();
-      toast(DEMO ? 'Solicitud guardada en modo demostración.' : 'Solicitud enviada correctamente.');
-    } catch (err) { toast(err.message, 'error'); }
+        partes,
+        entrega: payload.dueDate || '',
+        estado: 'Pendiente',
+        uuid: ''
+      };
+      if (liveUrl()) {
+        // Escribe la solicitud real en "SOLICITUDES OT" y dispara los correos (aprobador + solicitante).
+        const r = await postConfig({
+          formType: 'crear-solicitud',
+          correo: local.correo, nombre: local.sol, cc: local.cc, tipo: local.tipo,
+          herr: local.herr, cod: local.cod, trab: '', ind: local.ind,
+          entrega: local.entrega, partes
+        });
+        local.uuid = r.uuid || '';
+        state.solicitudes.unshift(local);
+        closeModal();
+        render();
+        toast(r.mailWarning
+          ? 'Solicitud enviada (aviso de correo pendiente).'
+          : 'Solicitud enviada. Se notificó al aprobador.');
+      } else {
+        // Sin conexión en vivo: guarda solo en esta muestra (modo demostración).
+        state.solicitudes.unshift(local);
+        closeModal();
+        render();
+        toast('Solicitud guardada en modo demostración.');
+      }
+    } catch (err) { toast('No se pudo enviar: ' + err.message, 'error'); }
   });
 }
 
