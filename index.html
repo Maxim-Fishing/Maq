@@ -478,7 +478,7 @@
 
         <section id="pending" class="view">
           <div class="view-head">
-            <div><h2>Pendientes por llenar</h2><p>Órdenes en cola que aún no tienen reporte de maquinado. <span id="pending-count" class="muted"></span></p></div>
+            <div><h2>Pendientes por llenar</h2><p>Todas las OT abiertas disponibles para registrar trabajo. <span id="pending-count" class="muted"></span></p></div>
             <button class="primary" data-open="report">Nuevo registro</button>
           </div>
           <div class="filters">
@@ -486,7 +486,7 @@
           </div>
           <article class="card">
             <div class="table-wrap">
-              <table><thead><tr><th>Consecutivo</th><th>Indicaciones</th><th>Solicitante</th><th>Entrega</th><th></th></tr></thead><tbody id="pending-table"></tbody></table>
+              <table><thead><tr><th>Consecutivo</th><th>Herramienta</th><th>Indicaciones</th><th>Solicitante</th><th>Entrega</th><th>Reportes</th><th></th></tr></thead><tbody id="pending-table"></tbody></table>
             </div>
           </article>
         </section>
@@ -1031,7 +1031,13 @@ const iconSearch = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 
 /* ---------- Render ---------- */
 const isMe = name => norm(name) === norm(state.user.name);
-const pendingOpen = () => state.pending.filter(p => !REPORTED.has(otCode(p.cons)));
+// "Pendientes por llenar" = TODAS las OT abiertas (disponibles para registrar trabajo),
+// tengan o no reportes previos — una orden abierta puede seguir recibiendo reportes hasta
+// que se cierre. Antes se excluían las que ya tenían algún reporte (por eso salían pocas).
+const reportsForCode = code => state.reports.filter(r => otCode(r.cons) === code && !/rechaz/i.test(r.estado || '')).length;
+const pendingOpen = () => state.hasRegistry
+  ? state.ot.filter(o => (o.estado || '') === 'Abierta')
+  : state.pending.filter(p => !REPORTED.has(otCode(p.cons)));
 
 // Feed unificado del ciclo completo para "Órdenes recientes":
 // solicitudes aún NO aprobadas (Pendiente/Rechazada) + órdenes reales (Abierta/Cerrada),
@@ -1059,7 +1065,7 @@ function render() {
     <div class="stat"><b>${state.hasRegistry ? 'Órdenes abiertas' : 'Órdenes'}</b><strong>${abiertas}</strong><span>${state.hasRegistry ? 'OT en ejecución' : 'Solicitudes registradas'}</span></div>
     <div class="stat"><b>Reportes de maquinado</b><strong>${reps.length}</strong><span>Registros de ejecución</span></div>
     <div class="stat"><b>Por aprobar</b><strong>${solPend + repPend}</strong><span>${solPend} solicitudes · ${repPend} trabajos</span></div>
-    <div class="stat"><b>Pendientes por llenar</b><strong>${porLlenar}</strong><span>OT abiertas sin reporte</span></div>`;
+    <div class="stat"><b>Pendientes por llenar</b><strong>${porLlenar}</strong><span>OT abiertas disponibles</span></div>`;
 
   const priority = recentFeed().slice(0,8);
   $('#priority-orders').innerHTML = priority.length
@@ -1393,18 +1399,24 @@ function renderReports() {
 function renderPending() {
   const q = ($('#pending-search').value || '').toLowerCase();
   const rows = pendingOpen()
-    .filter(p => `${p.cons} ${p.ind} ${p.sol}`.toLowerCase().includes(q));
-  $('#pending-count').textContent = `${rows.length} en cola`;
+    .filter(p => `${p.cons} ${p.herr || ''} ${p.ind} ${p.sol}`.toLowerCase().includes(q))
+    .sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+  $('#pending-count').textContent = `${rows.length} abiertas`;
   $('#pending-table').innerHTML = rows.length
-    ? rows.map(p => `
+    ? rows.map(p => {
+        const n = reportsForCode(otCode(p.cons));
+        return `
       <tr>
         <td data-label="Consecutivo"><b>${esc(p.cons)}</b></td>
-        <td data-label="Indicaciones" class="subject">${esc(p.ind || '—')}</td>
+        <td data-label="Herramienta" class="subject">${esc(p.herr || '—')}</td>
+        <td data-label="Indicaciones">${esc(p.ind || '—')}</td>
         <td data-label="Solicitante">${esc(p.sol || '—')}</td>
         <td data-label="Entrega">${esc(fmtDate(p.entrega))}</td>
+        <td data-label="Reportes">${n ? `<span class="pill closed">${n}</span>` : '<span class="muted">—</span>'}</td>
         <td data-label=""><button class="primary" data-action="fill-pending" data-cons="${esc(p.cons)}">Registrar</button></td>
-      </tr>`).join('')
-    : `<tr><td colspan="5">${emptyState('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 6 9 17l-5-5"/></svg>','Todo al día','No hay órdenes en cola sin reporte.')}</td></tr>`;
+      </tr>`;
+      }).join('')
+    : `<tr><td colspan="7">${emptyState('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 6 9 17l-5-5"/></svg>','Todo al día','No hay órdenes abiertas por ahora.')}</td></tr>`;
 }
 
 const iconCheck = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 6 9 17l-5-5"/></svg>';
