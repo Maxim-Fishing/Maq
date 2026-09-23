@@ -1436,6 +1436,7 @@ function renderApprovals() {
         <td data-label="Acción">
           <button class="secondary" data-action="open-report" data-idx="${state.reports.indexOf(r)}">Ver</button>
           <button class="primary" data-action="approve-report" data-idx="${state.reports.indexOf(r)}">Aprobar</button>
+          <button class="secondary" data-action="reject-report" data-idx="${state.reports.indexOf(r)}" style="color:var(--red,#c23b3b)">Rechazar</button>
         </td>
       </tr>`).join('')
     : `<tr><td colspan="5">${emptyState(iconCheck,'Todo al día','No hay trabajos pendientes de aprobación.')}</td></tr>`;
@@ -1916,34 +1917,63 @@ async function acceptSolicitud(idx, prefijo) {
   const s = state.solicitudes[idx];
   if (!s) return;
   const prog = {PR:'Programada', NP:'No programada', RE:'Reparo'}[prefijo] || prefijo;
-  const url = localStorage.getItem('maxim_approve_url') || '';
-  if (!url) {
-    closeModal();
-    toast(`Falta configurar la URL del Web App de solicitudes para aprobar desde aquí. Por ahora, apruébala como ${prefijo} desde el correo.`, 'error');
-    return;
-  }
-  if (!s.uuid) { toast('Esta solicitud no tiene UUID; apruébala desde el correo.', 'error'); return; }
+  if (!liveUrl()) { closeModal(); toast('Sin conexión en vivo: no se puede aceptar la solicitud ahora.', 'error'); return; }
+  if (!s.uuid) { toast('Esta solicitud no tiene UUID; actualiza los datos e intenta de nuevo.', 'error'); return; }
   const btn = document.querySelector(`#modal-root [data-accept-prefix="${prefijo}"]`);
-  await withLoading(btn, 'Aprobando…', async () => {
+  await withLoading(btn, 'Aceptando…', async () => {
     try {
-      const body = `formType=aceptacion&id=${encodeURIComponent(s.uuid)}&prefijo=${encodeURIComponent(prefijo)}`;
-      const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const r = await postConfig({ formType:'aceptar-solicitud', uuid: s.uuid, prefijo });
       s.estado = 'Aprobada';
       closeModal(); renderApprovals(); render();
-      toast(`Solicitud aprobada como ${prog} (${prefijo}). El consecutivo se genera en tu sistema.`);
-      setTimeout(() => refreshLive(false), 2000);
-    } catch (e) { toast('No se pudo aprobar: ' + e.message, 'error'); }
+      toast(`Solicitud aceptada como ${prog}. Consecutivo ${r.consecutivo || ''} generado.`);
+      setTimeout(() => refreshLive(false), 2500);
+    } catch (e) { toast('No se pudo aceptar: ' + e.message, 'error'); }
   });
 }
 
 function approveReport(idx) {
   const r = state.reports[idx];
   if (!r) return;
-  confirmDialog(`¿Aprobar el trabajo ${r.cons} de ${r.op}?`, () => {
-    r.estado = 'Aprobado';
-    render();
-    toast(DEMO ? 'Aprobado localmente (se guardará en Google al conectar el backend).' : 'Trabajo aprobado.');
+  if (!liveUrl()) { toast('Sin conexión en vivo.', 'error'); return; }
+  if (!r.uuid) { toast('Este reporte no tiene UUID; usa «Actualizar».', 'error'); return; }
+  confirmDialog(`¿Aprobar el trabajo ${r.cons} de ${r.op}?`, async () => {
+    try {
+      await postConfig({ formType:'aprobar-reporte', uuid: r.uuid });
+      r.estado = 'Aprobado';
+      render();
+      toast('Trabajo aprobado. Se notificó al operador.');
+      setTimeout(() => refreshLive(false), 2500);
+    } catch (e) { toast('No se pudo aprobar: ' + e.message, 'error'); }
+  });
+}
+
+function rejectReport(idx) {
+  const r = state.reports[idx];
+  if (!r) return;
+  if (!liveUrl()) { toast('Sin conexión en vivo.', 'error'); return; }
+  if (!r.uuid) { toast('Este reporte no tiene UUID; usa «Actualizar».', 'error'); return; }
+  modal(`Rechazar reporte · ${esc(r.cons)}`, `
+    <form id="reject-form" class="form" novalidate>
+      <div class="field full"><label for="rej-motivo">Motivo del rechazo</label>
+        <textarea required id="rej-motivo" name="motivo" placeholder="Explica qué debe corregir el operador."></textarea>
+        <span class="error-msg" data-error-for="motivo"></span></div>
+    </form>`,
+    `<button class="secondary" data-close>Cancelar</button>
+     <button class="primary" data-submit form="reject-form" style="background:var(--red,#c23b3b)"><span class="btn-label">Rechazar</span></button>`);
+  $('#reject-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    if (!validateForm(e.target)) return toast('Escribe el motivo.', 'error');
+    const motivo = $('#rej-motivo').value.trim();
+    const btn = document.querySelector('#modal-root [data-submit]');
+    await withLoading(btn, 'Rechazando…', async () => {
+      try {
+        await postConfig({ formType:'rechazar-reporte', uuid: r.uuid, motivo });
+        r.estado = 'Rechazado';
+        closeModal(); render();
+        toast('Reporte rechazado. Se notificó al operador.');
+        setTimeout(() => refreshLive(false), 2500);
+      } catch (e) { toast('No se pudo rechazar: ' + e.message, 'error'); }
+    });
   });
 }
 
@@ -2058,6 +2088,7 @@ document.addEventListener('click', e => {
     if (t.dataset.action === 'open-order') openOrder(+idx, t.dataset.src);
     if (t.dataset.action === 'open-report') openReport(+idx);
     if (t.dataset.action === 'approve-report') approveReport(+idx);
+    if (t.dataset.action === 'reject-report') rejectReport(+idx);
     if (t.dataset.action === 'accept-sol') openAcceptSolicitud(+idx);
     if (t.dataset.action === 'fill-pending') fillPending(t.dataset.cons);
     if (t.dataset.action === 'approve') approveRequest(id);
