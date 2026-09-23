@@ -1590,13 +1590,14 @@ function reportModal() {
         <div class="field"><label for="rep-order">Consecutivo / OT</label><input required id="rep-order" name="orderId" list="cons-list" placeholder="Buscar o escribir consecutivo"><datalist id="cons-list">${cons.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
         <div class="field"><label for="rep-date">Fecha de trabajo</label><input required id="rep-date" name="date" type="date" value="${today()}"></div>
         <div class="field"><label for="rep-op">Operador</label><input required id="rep-op" name="operator" value="${esc(state.user.name)}"></div>
-        <div class="field"><label for="rep-status">Estado al terminar</label><select id="rep-status" name="status"><option>Abierta</option><option>Cerrada</option></select></div>
+        <div class="field"><label for="rep-email">Correo del operador</label><input required id="rep-email" name="email" type="email" value="${esc(state.user.email)}" placeholder="Para avisarte de la aprobación"><span class="error-msg" data-error-for="email"></span></div>
         <div class="field full"><label for="rep-desc">Descripción del trabajo</label><textarea required id="rep-desc" name="description" placeholder="Trabajo realizado, verificaciones y novedades."></textarea></div>
         <div class="section-label">Operación y tiempos</div>
+        <div class="field"><label for="rep-part">Parte / componente</label><input id="rep-part" name="part" placeholder="Qué se maquinó (opcional)"></div>
         <div class="field"><label for="rep-lathe">Torno</label><select id="rep-lathe" name="lathe"><option value="">No aplica</option><option>TORNO 1</option><option>TORNO 2</option></select></div>
         <div class="field"><label for="rep-mill">Fresa</label><select id="rep-mill" name="mill"><option value="">No aplica</option><option>FRESA 1</option><option>FRESA 2</option></select></div>
-        <div class="field"><label for="rep-rough">Desbaste (h)</label><input id="rep-rough" name="roughing" type="number" step="0.1" min="0" value="0"></div>
-        <div class="field"><label for="rep-milling">Fresado (h)</label><input id="rep-milling" name="milling" type="number" step="0.1" min="0" value="0"></div>
+        <div class="field"><label for="rep-rough">Tiempo torno (h)</label><input id="rep-rough" name="roughing" type="number" step="0.1" min="0" value="0"></div>
+        <div class="field"><label for="rep-milling">Tiempo fresado (h)</label><input id="rep-milling" name="milling" type="number" step="0.1" min="0" value="0"></div>
         <div class="field"><label for="rep-mat">Material</label><input id="rep-mat" name="material" placeholder="Referencia / material"></div>
         <div class="field"><label for="rep-heat">Heat No.</label><input id="rep-heat" name="heat" placeholder="Opcional"></div>
       </div>
@@ -1613,16 +1614,50 @@ async function submitReport(e) {
   if (!validateForm(form)) return toast('Revisa los campos marcados.', 'error');
 
   const btn = document.querySelector('#modal-root [data-submit]');
-  const payload = Object.fromEntries(new FormData(form));
+  const p = Object.fromEntries(new FormData(form));
 
   await withLoading(btn, 'Guardando…', async () => {
     try {
-      await api('createWorkLog', payload);
-      closeModal();
-      render();
-      toast(DEMO ? 'Reporte guardado en modo demostración.' : 'Reporte guardado correctamente.');
-    } catch (err) { toast(err.message, 'error'); }
+      // Objeto local con la forma que produce buildReports_ (para "Mis registros").
+      const local = {
+        cons: (p.orderId || '').toUpperCase(), op: p.operator || state.user.name,
+        fecha: p.date || today(), estado: 'Pendiente', desc: p.description || '', uuid: '',
+        insertos: [],
+        partes: [{
+          p: p.part || p.material || 'Parte 1', diam: '', long: '', heat: p.heat || '', ref: p.material || '',
+          torno: p.lathe || '', tTorno: hhmmss(p.roughing), perf: '', mand: '', acab: '', pin: '', box: '',
+          fresa: p.mill || '', tipoF: '', tFresa: hhmmss(p.milling)
+        }]
+      };
+      if (liveUrl()) {
+        const r = await postConfig({
+          formType: 'crear-reporte',
+          cons: local.cons, fecha: local.fecha, operador: local.op, correo: p.email || '',
+          descripcion: local.desc, parte: p.part || '', torno: p.lathe || '', desbaste: p.roughing || '',
+          fresa: p.mill || '', fresado: p.milling || '', material: p.material || '', heat: p.heat || ''
+        });
+        local.uuid = r.uuid || '';
+        state.reports.unshift(local);
+        closeModal();
+        render();
+        toast(r.mailWarning ? 'Reporte guardado (aviso de correo pendiente).' : 'Reporte guardado. Se notificó al aprobador.');
+        setTimeout(() => refreshLive(false), 2500);
+      } else {
+        state.reports.unshift(local);
+        closeModal();
+        render();
+        toast('Reporte guardado en modo demostración.');
+      }
+    } catch (err) { toast('No se pudo guardar: ' + err.message, 'error'); }
   });
+}
+
+// Horas decimales → 'H:MM:SS' (para mostrar el reporte recién creado sin refrescar).
+function hhmmss(v) {
+  const h = parseFloat(v);
+  if (!h || isNaN(h) || h <= 0) return '';
+  const tot = Math.round(h * 3600), hh = Math.floor(tot / 3600), mm = Math.floor((tot % 3600) / 60), ss = tot % 60;
+  return hh + ':' + String(mm).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
 }
 
 function userModal() {
