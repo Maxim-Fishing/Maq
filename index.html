@@ -588,6 +588,8 @@ const state = {
   hasRegistry: false,
   operators: [],    // Nombres para el login
   requesters: [],
+  centros: [],      // Centros de costo {codigo, desc} (HT Y CC)
+  herramientas: [], // Lista maestra de herramientas (HT Y CC)
   requests: [],
   activity: [],
   configVars: null, // Variables de costo del BALANCE: {_sheets, personal, material, energia}
@@ -595,6 +597,27 @@ const state = {
 };
 // Consecutivos que ya tienen al menos un reporte
 let REPORTED = new Set();
+
+// Materiales soportados por la matriz de costos (hoja MATERIAL del BALANCE).
+const MATERIALS = ['4140', '4340', 'INOX', 'ALUMINIO', 'BRONCE', 'TEFLON'];
+// <option> para un <select> de material (con opción vacía inicial).
+const materialOptions = (sel = '') =>
+  `<option value="">— Selecciona —</option>` +
+  MATERIALS.map(m => `<option value="${esc(m)}"${norm(m) === norm(sel) ? ' selected' : ''}>${esc(m)}</option>`).join('');
+// <datalist> de centros de costo: value = código, texto = descripción (área) → busca por ambos.
+const centroOptions = () =>
+  (state.centros || []).map(c => `<option value="${esc(c.codigo)}">${esc(c.desc || '')}</option>`).join('');
+// <datalist> de herramientas maestras (HT Y CC).
+const herramientaOptions = () =>
+  (state.herramientas || []).map(h => `<option value="${esc(h)}"></option>`).join('');
+// Resuelve un centro de costos escrito (código o área) a su código válido; null si no existe.
+function resolveCentro(val) {
+  const v = norm(val); if (!v) return null;
+  const c = (state.centros || []);
+  return (c.find(x => norm(x.codigo) === v) ||
+          c.find(x => norm(x.desc) === v) ||
+          c.find(x => v.startsWith(norm(x.codigo)) || (x.desc && v.startsWith(norm(x.desc)))) || null)?.codigo || null;
+}
 
 /* ---------- Fuente de datos (embebida + en vivo) ----------
    Hidrata el estado desde un objeto {orders, reports, pending, operators, requesters}.
@@ -610,6 +633,8 @@ function applyData(data) {
   state.pending     = data.pending || [];
   state.operators   = data.operators || [];
   state.requesters  = data.requesters || [];
+  if (data.centros && data.centros.length) state.centros = data.centros;
+  if (data.herramientas && data.herramientas.length) state.herramientas = data.herramientas;
   if (data.costsByMonth && data.costsByMonth.length) { state.costs = data.costsByMonth; state.costsIsLive = true; }
   REPORTED = new Set(state.reports.map(r => otCode(r.cons)).filter(Boolean));
 
@@ -1190,9 +1215,9 @@ function simPartFieldset(rates, n) {
       <div class="field"><label>Diámetro</label><select data-f="diam">${diamOpts}</select></div>
       <div class="field"><label>Longitud (cm)</label><input type="number" step="any" data-f="long" placeholder="0"></div>
       <div class="field"><label>Torno</label><select data-f="torno">${opt(tornos, 'Ninguno')}</select></div>
-      <div class="field"><label>Tiempo torno (h:mm:ss)</label><input type="text" data-f="tTorno" placeholder="0:00:00"></div>
+      <div class="field"><label>Tiempo torno (horas)</label><input type="number" step="0.25" min="0" inputmode="decimal" data-f="tTorno" placeholder="0"></div>
       <div class="field"><label>Fresa</label><select data-f="fresa">${opt(fresas, 'Ninguna')}</select></div>
-      <div class="field"><label>Tiempo fresa (h:mm:ss)</label><input type="text" data-f="tFresa" placeholder="0:00:00"></div>
+      <div class="field"><label>Tiempo fresa (horas)</label><input type="number" step="0.25" min="0" inputmode="decimal" data-f="tFresa" placeholder="0"></div>
     </div>
   </fieldset>`;
 }
@@ -1230,7 +1255,7 @@ function readSim() {
 function simCalc() {
   const rates = costRates(); if (!rates) return;
   const data = readSim();
-  const rows = data.parts.map((p, i) => ({ n:i+1, p, c: costParte(rates, { ...p, tiemposTorno:[p.tTorno] }) }));
+  const rows = data.parts.map((p, i) => ({ n:i+1, p, c: costParte(rates, { ...p, tFresa: hhmmss(p.tFresa), tiemposTorno:[hhmmss(p.tTorno)] }) }));
   const tot = rows.reduce((a, x) => { ['cMat','cTorno','cFresa','cMO','cArr','total','horas'].forEach(k => a[k]=(a[k]||0)+x.c[k]); return a; }, {});
   simLast = { ...data, rows, tot, fecha: new Date() };
   const host = $('#sim-result'); if (host) host.innerHTML = simResultHtml(simLast);
@@ -1505,9 +1530,9 @@ function requestModal() {
       <div class="form-grid">
         <div class="field"><label for="req-email">Correo del solicitante</label><input required id="req-email" name="email" type="email" value="${esc(state.user.email)}"><span class="error-msg" data-error-for="email"></span></div>
         <div class="field"><label for="req-name">Nombre del solicitante</label><input required id="req-name" name="requester" value="${esc(state.user.name)}"><span class="error-msg" data-error-for="requester"></span></div>
-        <div class="field"><label for="req-cost">Centro de costos</label><input required id="req-cost" name="costCenter" placeholder="MAX0001001MTHT"><span class="error-msg" data-error-for="costCenter"></span></div>
+        <div class="field"><label for="req-cost">Centro de costos</label><input required id="req-cost" name="costCenter" list="cc-list" placeholder="Escribe el código o el área…" autocomplete="off"><datalist id="cc-list">${centroOptions()}</datalist><span class="error-msg" data-error-for="costCenter"></span></div>
         <div class="field"><label for="req-type">Tipo de OT</label><select id="req-type" name="type"><option>Desarrollo especial</option><option>Salida a campo</option><option>Reabastecimiento de inventario</option><option>Cubrimientos</option></select></div>
-        <div class="field"><label for="req-tool">Herramienta / equipo</label><input required id="req-tool" name="tool" list="tools" placeholder="Buscar o escribir"><datalist id="tools"><option>PROYECTOS</option><option>MTTO IT</option><option>MTTO ELECTROMECÁNICO</option></datalist><span class="error-msg" data-error-for="tool"></span></div>
+        <div class="field"><label for="req-tool">Herramienta / equipo</label><input required id="req-tool" name="tool" list="tools" placeholder="Buscar o escribir" autocomplete="off"><datalist id="tools">${state.herramientas.length ? herramientaOptions() : '<option>PROYECTOS</option><option>MTTO IT</option><option>MTTO ELECTROMECÁNICO</option>'}</datalist><span class="error-msg" data-error-for="tool"></span></div>
         <div class="field"><label for="req-code">Código de herramienta</label><input id="req-code" name="toolCode" placeholder="Opcional"></div>
         <div class="field full"><label for="req-notes">Indicaciones del cliente</label><textarea required id="req-notes" name="notes" placeholder="Describe el trabajo requerido, especificaciones y condiciones."></textarea><span class="error-msg" data-error-for="notes"></span></div>
         <div class="field"><label for="req-due">Fecha requerida</label><input required id="req-due" name="dueDate" type="date" min="${today()}"><span class="error-msg" data-error-for="dueDate"></span></div>
@@ -1558,13 +1583,21 @@ async function submitRequest(e) {
   const payload = Object.fromEntries(new FormData(form));
   const partes = parts.map(p => ({ q: String(p.quantity), n: p.name }));
 
+  // Centro de costos: si hay lista cargada, exige uno válido (código o área) y guarda el CÓDIGO.
+  let cc = payload.costCenter || '';
+  if ((state.centros || []).length) {
+    const code = resolveCentro(cc);
+    if (!code) return toast('Selecciona un centro de costos válido de la lista (código o área).', 'error');
+    cc = code;
+  }
+
   await withLoading(btn, 'Enviando…', async () => {
     try {
       const local = {
         fecha: today(),
         correo: payload.email || '',
         sol: payload.requester || state.user.name,
-        cc: payload.costCenter || '',
+        cc,
         tipo: payload.type || '',
         herr: payload.tool || '',
         cod: payload.toolCode || '',
@@ -1612,12 +1645,13 @@ function reportModal() {
         <div class="field"><label for="rep-email">Correo del operador</label><input required id="rep-email" name="email" type="email" value="${esc(state.user.email)}" placeholder="Para avisarte de la aprobación"><span class="error-msg" data-error-for="email"></span></div>
         <div class="field full"><label for="rep-desc">Descripción del trabajo</label><textarea required id="rep-desc" name="description" placeholder="Trabajo realizado, verificaciones y novedades."></textarea></div>
         <div class="section-label">Operación y tiempos</div>
+        <div class="field full"><p class="notice" style="margin:0">Los tiempos van en <b>horas decimales</b>: 0.5 = 30 min · 1.25 = 1 h 15 min · 1.5 = 1 h 30 min.</p></div>
         <div class="field"><label for="rep-part">Parte / componente</label><input id="rep-part" name="part" placeholder="Qué se maquinó (opcional)"></div>
+        <div class="field"><label for="rep-mat">Material</label><select id="rep-mat" name="material">${materialOptions()}</select></div>
         <div class="field"><label for="rep-lathe">Torno</label><select id="rep-lathe" name="lathe"><option value="">No aplica</option><option>TORNO 1</option><option>TORNO 2</option></select></div>
         <div class="field"><label for="rep-mill">Fresa</label><select id="rep-mill" name="mill"><option value="">No aplica</option><option>FRESA 1</option><option>FRESA 2</option></select></div>
-        <div class="field"><label for="rep-rough">Tiempo torno (h)</label><input id="rep-rough" name="roughing" type="number" step="0.1" min="0" value="0"></div>
-        <div class="field"><label for="rep-milling">Tiempo fresado (h)</label><input id="rep-milling" name="milling" type="number" step="0.1" min="0" value="0"></div>
-        <div class="field"><label for="rep-mat">Material</label><input id="rep-mat" name="material" placeholder="Referencia / material"></div>
+        <div class="field"><label for="rep-rough">Tiempo torno (horas)</label><input id="rep-rough" name="roughing" type="number" step="0.25" min="0" inputmode="decimal" value="0"></div>
+        <div class="field"><label for="rep-milling">Tiempo fresado (horas)</label><input id="rep-milling" name="milling" type="number" step="0.25" min="0" inputmode="decimal" value="0"></div>
         <div class="field"><label for="rep-heat">Heat No.</label><input id="rep-heat" name="heat" placeholder="Opcional"></div>
       </div>
     </form>`,
