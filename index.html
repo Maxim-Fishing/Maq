@@ -604,6 +604,7 @@ const state = {
   requesters: [],
   centros: [],      // Centros de costo {codigo, desc} (HT Y CC)
   herramientas: [], // Lista maestra de herramientas (HT Y CC)
+  inactivos: [],    // Nombres (normalizados) de torneros desactivados
   requests: [],
   activity: [],
   configVars: null, // Variables de costo del BALANCE: {_sheets, personal, material, energia}
@@ -642,6 +643,25 @@ function resolveCentro(val) {
           c.find(x => norm(x.desc) === v) ||
           c.find(x => v.startsWith(norm(x.codigo)) || (x.desc && v.startsWith(norm(x.desc)))) || null)?.codigo || null;
 }
+// Torneros = filas de PERSONAL (config) con nombre + correo válido (col A nombre, col B correo).
+function personalTorneros() {
+  const per = state.configVars && state.configVars.personal;
+  if (!per || !per.rows) return [];
+  const out = [], seen = {};
+  per.rows.forEach(r => {
+    const name = cv_(r[0]), email = cv_(r[1]);
+    if (name && email && email.indexOf('@') > 0) {
+      const k = norm(name); if (!seen[k]) { seen[k] = 1; out.push({ name, email }); }
+    }
+  });
+  return out;
+}
+// Correo predeterminado de un tornero (desde PERSONAL); '' si no está.
+function operatorEmail(name) {
+  const t = personalTorneros().find(x => norm(x.name) === norm(name));
+  return t ? t.email : '';
+}
+const isInactivo = name => (state.inactivos || []).includes(norm(name));
 
 /* ---------- Fuente de datos (embebida + en vivo) ----------
    Hidrata el estado desde un objeto {orders, reports, pending, operators, requesters}.
@@ -659,6 +679,7 @@ function applyData(data) {
   state.requesters  = data.requesters || [];
   if (data.centros && data.centros.length) state.centros = data.centros;
   if (data.herramientas && data.herramientas.length) state.herramientas = data.herramientas;
+  if (data.inactivos) state.inactivos = data.inactivos;
   if (data.costsByMonth && data.costsByMonth.length) { state.costs = data.costsByMonth; state.costsIsLive = true; }
   REPORTED = new Set(state.reports.map(r => otCode(r.cons)).filter(Boolean));
 
@@ -1519,18 +1540,31 @@ function renderApprovals() {
 
 function renderUsers() {
   const isAdmin = state.user.role === 'Administrador';
-  $('#users-table').innerHTML = state.users.length
-    ? state.users.map((u,i) => `
-      <tr>
+  if (!state.configVars) { $('#users-table').innerHTML = `<tr><td colspan="5"><span class="muted">Cargando torneros…</span></td></tr>`; return; }
+  const tor = personalTorneros();
+  $('#users-table').innerHTML = tor.length
+    ? tor.map(u => {
+        const activo = !isInactivo(u.name);
+        return `<tr>
         <td data-label="Nombre"><b>${esc(u.name)}</b></td>
         <td data-label="Correo">${esc(u.email)}</td>
-        <td data-label="Rol">${esc(u.role)}</td>
-        <td data-label="Estado">${u.active ? '<span class="pill closed">Activo</span>' : '<span class="pill rejected">Inactivo</span>'}</td>
+        <td data-label="Rol">Operador (tornero)</td>
+        <td data-label="Estado">${activo ? '<span class="pill closed">Activo</span>' : '<span class="pill rejected">Inactivo</span>'}</td>
         <td data-label="Acción">${isAdmin
-          ? `<button class="secondary" data-action="toggle-user" data-idx="${i}">${u.active ? 'Desactivar' : 'Activar'}</button>`
+          ? `<button class="secondary" data-action="toggle-op" data-name="${esc(u.name)}" data-activo="${activo ? '1' : '0'}">${activo ? 'Desactivar' : 'Activar'}</button>`
           : '<span class="muted">Sin permisos</span>'}</td>
-      </tr>`).join('')
-    : `<tr><td colspan="5">${emptyState('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>','Sin usuarios','Añade el primer usuario para comenzar.')}</td></tr>`;
+      </tr>`;
+      }).join('')
+    : `<tr><td colspan="5">${emptyState('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>','Sin torneros','Añade un tornero con su correo para comenzar.')}</td></tr>`;
+}
+async function toggleOp(name, makeActive) {
+  if (!liveUrl()) return toast('Sin conexión en vivo.', 'error');
+  try {
+    const r = await postConfig({ formType: 'op-activo', nombre: name, activo: makeActive });
+    if (r.inactivos) state.inactivos = r.inactivos;
+    render();
+    toast(makeActive ? 'Tornero activado.' : 'Tornero desactivado.');
+  } catch (e) { toast('No se pudo: ' + e.message, 'error'); }
 }
 
 /* ---------- Navegación ---------- */
@@ -1672,7 +1706,7 @@ function reportFormFields(d = {}) {
         <div class="field"><label for="rep-order">Consecutivo / OT</label><input required id="rep-order" name="orderId" list="cons-list" value="${esc(d.orderId || '')}" placeholder="Selecciona el consecutivo" autocomplete="off"><datalist id="cons-list">${reportConsOptions()}</datalist><span class="error-msg" data-error-for="orderId"></span></div>
         <div class="field"><label for="rep-date">Fecha de trabajo</label><input required id="rep-date" name="date" type="date" value="${esc(d.date || today())}"></div>
         <div class="field"><label for="rep-op">Operador</label><input required id="rep-op" name="operator" value="${esc(d.operator != null ? d.operator : state.user.name)}"></div>
-        <div class="field"><label for="rep-email">Correo del operador</label><input required id="rep-email" name="email" type="email" value="${esc(d.email != null ? d.email : (state.user.email || ''))}" placeholder="Para avisarte de la aprobación"><span class="error-msg" data-error-for="email"></span></div>
+        <div class="field"><label for="rep-email">Correo del operador</label><input required id="rep-email" name="email" type="email" value="${esc(d.email != null ? d.email : (operatorEmail(d.operator != null ? d.operator : state.user.name) || state.user.email || ''))}" placeholder="Para avisarte de la aprobación"><span class="error-msg" data-error-for="email"></span></div>
         <div class="field full"><label for="rep-desc">Descripción del trabajo</label><textarea required id="rep-desc" name="description" placeholder="Trabajo realizado, verificaciones y novedades.">${esc(d.description || '')}</textarea></div>
         <div class="section-label">Parte y material</div>
         <div class="field"><label for="rep-part">Parte / componente</label><input id="rep-part" name="part" value="${esc(d.part || '')}" placeholder="Qué se maquinó"></div>
@@ -1693,6 +1727,10 @@ function reportModal() {
     `<button class="secondary" data-close>Cancelar</button>
      <button class="primary" data-submit form="report-form"><span class="btn-label">Guardar reporte</span></button>`);
   $('#report-form').addEventListener('submit', submitReport);
+  // Prellenar el correo del tornero desde PERSONAL (si aún no había config cargada).
+  if (!state.configVars) fetchConfig().then(() => {
+    const el = $('#rep-email'); if (el && !el.value) el.value = operatorEmail(state.user.name) || state.user.email || '';
+  }).catch(() => {});
 }
 function editReportModal(idx) {
   const r = state.reports[idx]; if (!r) return;
@@ -1770,18 +1808,16 @@ function hhmmss(v) {
 }
 
 function userModal() {
-  modal('Añadir usuario', `
+  modal('Añadir tornero', `
     <form id="user-form" class="form" novalidate>
       <div class="form-grid">
-        <div class="field"><label for="usr-name">Nombre completo</label><input required id="usr-name" name="name" placeholder="Nombre y apellido"><span class="error-msg" data-error-for="name"></span></div>
-        <div class="field"><label for="usr-email">Correo electrónico</label><input required id="usr-email" name="email" type="email" placeholder="persona@empresa.com"><span class="error-msg" data-error-for="email"></span></div>
-        <div class="field"><label for="usr-role">Rol</label><select id="usr-role" name="role"><option>Solicitante</option><option>Operador</option><option>Aprobador</option><option>Administrador</option></select></div>
-        <div class="field"><label for="usr-active">Estado</label><select id="usr-active" name="active"><option value="true">Activo</option><option value="false">Inactivo</option></select></div>
-        <p class="notice field full">En producción, al guardar se enviará el enlace temporal de acceso al correo del usuario.</p>
+        <div class="field"><label for="usr-name">Nombre completo del tornero</label><input required id="usr-name" name="name" placeholder="Nombre y apellido"><span class="error-msg" data-error-for="name"></span></div>
+        <div class="field"><label for="usr-email">Correo del tornero</label><input required id="usr-email" name="email" type="email" placeholder="persona@maximfishing.com"><span class="error-msg" data-error-for="email"></span></div>
+        <p class="notice field full">Queda disponible para registrar trabajos y su correo se <b>prellena</b> al llenar un reporte (puede editarlo). El salario para el costo de mano de obra se define en «Costos y variables».</p>
       </div>
     </form>`,
     `<button class="secondary" data-close>Cancelar</button>
-     <button class="primary" data-submit form="user-form"><span class="btn-label">Guardar usuario</span></button>`);
+     <button class="primary" data-submit form="user-form"><span class="btn-label">Añadir tornero</span></button>`);
 
   $('#user-form').addEventListener('submit', submitUser);
 }
@@ -1792,22 +1828,19 @@ async function submitUser(e) {
   if (!validateForm(form)) return toast('Revisa los campos marcados.', 'error');
 
   const btn = document.querySelector('#modal-root [data-submit]');
-  const payload = Object.fromEntries(new FormData(form));
-  payload.active = payload.active === 'true';
-
-  if (state.users.some(u => u.email.toLowerCase() === payload.email.toLowerCase())) {
-    return toast('Ya existe un usuario con ese correo.', 'error');
-  }
+  const p = Object.fromEntries(new FormData(form));
+  if (personalTorneros().some(u => norm(u.name) === norm(p.name))) return toast('Ya existe un tornero con ese nombre.', 'error');
+  if (!liveUrl()) return toast('Sin conexión en vivo para guardar el tornero.', 'error');
 
   await withLoading(btn, 'Guardando…', async () => {
     try {
-      await api('createUser', payload);
-      state.users.push(payload);
-      localStorage.setItem('maxim_demo_users', JSON.stringify(state.users));
+      // Agrega fila a PERSONAL (col A nombre, col B correo); las columnas de fórmula se derraman solas.
+      await postConfig({ formType: 'config-append', sheet: 'PERSONAL', values: [p.name, p.email] });
       closeModal();
+      toast('Tornero añadido.');
+      await fetchConfig(true);   // recarga PERSONAL
       render();
-      toast(DEMO ? 'Usuario añadido en esta muestra.' : 'Usuario creado y enlace enviado.');
-    } catch (err) { toast(err.message, 'error'); }
+    } catch (err) { toast('No se pudo guardar: ' + err.message, 'error'); }
   });
 }
 
@@ -2103,7 +2136,7 @@ function fillNameOptions() {
   const role = $('#free-role').value;
   let list;
   if (role === 'Operador') {
-    list = state.operators;
+    list = (state.operators || []).filter(n => !isInactivo(n));
   } else {
     // Solicitantes: lista completa embebida + los que aparezcan en los datos, sin duplicados
     const set = new Map();
@@ -2217,6 +2250,7 @@ document.addEventListener('click', e => {
     if (t.dataset.action === 'approve') approveRequest(id);
     if (t.dataset.action === 'reject') rejectRequest(id);
     if (t.dataset.action === 'toggle-user') toggleUser(+idx);
+    if (t.dataset.action === 'toggle-op') toggleOp(t.dataset.name, t.dataset.activo === '0');
     if (t.dataset.action === 'cfg-save') saveConfig();
     if (t.dataset.action === 'cfg-add') openAddConfig(t.dataset.key);
     if (t.dataset.action === 'appr-tab') { state.apprTab = t.dataset.tab; renderApprovals(); }
