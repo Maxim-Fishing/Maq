@@ -120,6 +120,11 @@
   .closed{color:#086a37;background:var(--green-soft)}
   .rejected{color:var(--red);background:var(--red-soft)}
   .overdue{color:var(--red);background:var(--red-soft)}
+  .abierta{color:var(--red);background:var(--red-soft)}
+  .neutral{color:#475467;background:#eef1f4}
+  /* Fila teñida por estado de la OT: roja = Abierta, verde = Cerrada */
+  tr.row-abierta>td{background:var(--red-soft)}
+  tr.row-cerrada>td{background:var(--green-soft)}
 
   /* ---------- Activity ---------- */
   .activity{display:grid;gap:16px}
@@ -242,6 +247,8 @@
     .table-wrap thead{display:none}
     .table-wrap table,.table-wrap tbody,.table-wrap tr,.table-wrap td{display:block;width:100%}
     .table-wrap tr{border:1px solid var(--line);border-radius:var(--r-lg);margin-bottom:10px;padding:10px 12px;background:#fff}
+    .table-wrap tr.row-abierta{background:var(--red-soft)}.table-wrap tr.row-abierta>td{background:transparent}
+    .table-wrap tr.row-cerrada{background:var(--green-soft)}.table-wrap tr.row-cerrada>td{background:transparent}
     .table-wrap td{display:flex;justify-content:space-between;align-items:center;gap:12px;border:0;padding:7px 0;white-space:normal}
     .table-wrap td:not(:last-child){border-bottom:1px dashed #eef0f3}
     .table-wrap td::before{content:attr(data-label);font-weight:750;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em;flex-shrink:0}
@@ -973,9 +980,11 @@ async function api(action, payload = {}) {
 
 /* ---------- UI helpers ---------- */
 function statusPill(v) {
-  const c = {Abierta:'open', Pendiente:'pending', Cerrada:'closed', Rechazada:'rejected', Aprobada:'closed'}[v] || 'open';
+  const c = {Abierta:'abierta', Pendiente:'pending', Cerrada:'closed', Rechazada:'rejected', Aprobada:'closed'}[v] || 'open';
   return `<span class="pill ${c}">${esc(v)}</span>`;
 }
+// Clase para teñir la fila según el estado de la OT.
+const estadoRowClass = e => e === 'Abierta' ? 'row-abierta' : (e === 'Cerrada' ? 'row-cerrada' : '');
 
 let toastTimer;
 function toast(message, type='success') {
@@ -1073,8 +1082,7 @@ function validateForm(form) {
 
 /* ---------- Helpers de datos reales ---------- */
 function tipoPill(t) {
-  const c = {'Desarrollo especial':'open','Salida a campo':'pending','Reabastecimiento de inventario':'closed','Cubrimientos':'rejected'}[t] || 'open';
-  return `<span class="pill ${c}">${esc(t || '—')}</span>`;
+  return `<span class="pill neutral">${esc(t || '—')}</span>`;
 }
 const iconSearch = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
 
@@ -1408,7 +1416,7 @@ function renderOrders() {
   $('#orders-count').textContent = `${rows.length} de ${base.length}`;
   $('#orders-table').innerHTML = rows.length
     ? rows.slice(0,1000).map(o => `
-      <tr>
+      <tr class="${estadoRowClass(o.estado)}">
         <td data-label="Consecutivo">${o.cons ? `<b>${esc(o.cons)}</b>` : `<span class="muted">${esc(fmtDate(o.fecha))}</span>`}</td>
         <td data-label="Herramienta" class="subject">${esc(o.herr || '—')}</td>
         <td data-label="Solicitante">${esc(o.sol || '—')}</td>
