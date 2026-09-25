@@ -42,6 +42,10 @@
   .brand-logo--login{width:min(240px,72%);aspect-ratio:866/418;margin:0 auto}
   .brand-chip{background:#fff;border-radius:12px;padding:8px 12px;display:inline-block;box-shadow:var(--shadow-sm)}
   .brand-chip .brand-logo{width:150px;aspect-ratio:866/418}
+  .pass-wrap{position:relative;display:flex;align-items:center}
+  .pass-wrap input{flex:1;padding-right:62px}
+  .pass-toggle{position:absolute;right:6px;top:50%;transform:translateY(-50%);background:#f1f3f6;border:1px solid var(--line);border-radius:6px;padding:5px 11px;font-size:12px;font-weight:700;color:#6b7280;cursor:pointer}
+  .pass-toggle:hover{color:var(--ink)}
   .login h1{font-size:28px;line-height:1.15;margin:28px 0 10px}
   .login p{color:var(--muted);margin:0 0 24px}
   .notice{padding:12px 14px;background:var(--orange-soft);border-left:3px solid var(--orange);border-radius:5px;color:#653000;font-size:13px}
@@ -295,7 +299,10 @@
       <form id="admin-form" class="form ltab-panel hidden" data-panel="admin" style="padding:0" novalidate>
         <div class="field">
           <label for="admin-pass">Contraseña de administrador</label>
-          <input type="password" id="admin-pass" placeholder="Aún sin candado" autocomplete="off">
+          <div class="pass-wrap">
+            <input type="password" id="admin-pass" placeholder="Aún sin candado" autocomplete="off">
+            <button type="button" id="admin-pass-toggle" class="pass-toggle" aria-label="Mostrar u ocultar contraseña" aria-pressed="false">Ver</button>
+          </div>
         </div>
         <button class="primary" style="margin-top:18px;width:100%" type="submit"><span class="btn-label">Ingresar como administrador</span></button>
         <p class="notice" style="margin-top:16px">El candado con la hoja de contraseñas se activará al conectar el backend. Por ahora el acceso es directo.</p>
@@ -598,12 +605,22 @@ const state = {
 // Consecutivos que ya tienen al menos un reporte
 let REPORTED = new Set();
 
-// Materiales soportados por la matriz de costos (hoja MATERIAL del BALANCE).
-const MATERIALS = ['4140', '4340', 'INOX', 'ALUMINIO', 'BRONCE', 'TEFLON'];
+// Materiales soportados por la matriz de costos (hoja MATERIAL del BALANCE — nombres EXACTOS).
+const MATERIALS = ['4140', '4340', 'INOXIDABLE', 'ALUMINIO', 'BRONCE', 'TEFLON'];
+// Diámetros en mm de la matriz de costos (col B de MATERIAL).
+const DIAMETROS_MM = ['0.00','6.35','9.53','12.70','19.05','25.40','28.58','31.75','38.10','43.18','44.45','48.26','50.80','53.98','57.15','59.44','63.50','69.85','76.20','82.55','88.90','101.60','114.30','127.00','139.70','152.40','165.10','177.80','190.50','203.20','215.90','228.60','254.00','279.40','304.80','330.20','406.40'];
+// Tipos de trabajo (columna "tipo de trabajo" del form OT).
+const WORK_TYPES = ['Maquinado (Fabricación)', 'Reparación'];
 // <option> para un <select> de material (con opción vacía inicial).
 const materialOptions = (sel = '') =>
   `<option value="">— Selecciona —</option>` +
   MATERIALS.map(m => `<option value="${esc(m)}"${norm(m) === norm(sel) ? ' selected' : ''}>${esc(m)}</option>`).join('');
+const diametroOptions = (sel = '') =>
+  `<option value="">— Selecciona —</option>` +
+  DIAMETROS_MM.map(d => `<option value="${d}"${d === sel ? ' selected' : ''}>${d} mm</option>`).join('');
+const workTypeOptions = (sel = '') =>
+  `<option value="">— Selecciona —</option>` +
+  WORK_TYPES.map(t => `<option value="${esc(t)}"${norm(t) === norm(sel) ? ' selected' : ''}>${esc(t)}</option>`).join('');
 // <datalist> de centros de costo: value = código, texto = descripción (área) → busca por ambos.
 const centroOptions = () =>
   (state.centros || []).map(c => `<option value="${esc(c.codigo)}">${esc(c.desc || '')}</option>`).join('');
@@ -1423,7 +1440,7 @@ function renderReports() {
         <td data-label="Fecha">${esc(fmtDate(r.fecha))}</td>
         <td data-label="Partes">${r.partes.length}</td>
         <td data-label="Estado">${statusPill(r.estado === 'Aprobado' ? 'Aprobada' : r.estado)}</td>
-        <td data-label=""><button class="secondary" data-action="open-report" data-idx="${state.reports.indexOf(r)}">Ver</button></td>
+        <td data-label=""><button class="secondary" data-action="open-report" data-idx="${state.reports.indexOf(r)}">Ver</button>${canEditReport(r) ? `<button class="primary" data-action="edit-report" data-idx="${state.reports.indexOf(r)}">Editar</button>` : ''}</td>
       </tr>`).join('')
     : `<tr><td colspan="6">${emptyState(iconSearch, mine ? 'Sin registros' : 'Sin resultados', mine ? 'Aún no has registrado trabajos.' : 'Ajusta los filtros o la búsqueda para encontrar reportes.')}</td></tr>`;
 }
@@ -1532,6 +1549,7 @@ function requestModal() {
         <div class="field"><label for="req-name">Nombre del solicitante</label><input required id="req-name" name="requester" value="${esc(state.user.name)}"><span class="error-msg" data-error-for="requester"></span></div>
         <div class="field"><label for="req-cost">Centro de costos</label><input required id="req-cost" name="costCenter" list="cc-list" placeholder="Escribe el código o el área…" autocomplete="off"><datalist id="cc-list">${centroOptions()}</datalist><span class="error-msg" data-error-for="costCenter"></span></div>
         <div class="field"><label for="req-type">Tipo de OT</label><select id="req-type" name="type"><option>Desarrollo especial</option><option>Salida a campo</option><option>Reabastecimiento de inventario</option><option>Cubrimientos</option></select></div>
+        <div class="field"><label for="req-worktype">Tipo de trabajo</label><select required id="req-worktype" name="workType">${workTypeOptions()}</select><span class="error-msg" data-error-for="workType"></span></div>
         <div class="field"><label for="req-tool">Herramienta / equipo</label><input required id="req-tool" name="tool" list="tools" placeholder="Buscar o escribir" autocomplete="off"><datalist id="tools">${state.herramientas.length ? herramientaOptions() : '<option>PROYECTOS</option><option>MTTO IT</option><option>MTTO ELECTROMECÁNICO</option>'}</datalist><span class="error-msg" data-error-for="tool"></span></div>
         <div class="field"><label for="req-code">Código de herramienta</label><input id="req-code" name="toolCode" placeholder="Opcional"></div>
         <div class="field full"><label for="req-notes">Indicaciones del cliente</label><textarea required id="req-notes" name="notes" placeholder="Describe el trabajo requerido, especificaciones y condiciones."></textarea><span class="error-msg" data-error-for="notes"></span></div>
@@ -1601,7 +1619,7 @@ async function submitRequest(e) {
         tipo: payload.type || '',
         herr: payload.tool || '',
         cod: payload.toolCode || '',
-        trab: '',
+        trab: payload.workType || '',
         ind: payload.notes || '',
         partes,
         entrega: payload.dueDate || '',
@@ -1613,7 +1631,7 @@ async function submitRequest(e) {
         const r = await postConfig({
           formType: 'crear-solicitud',
           correo: local.correo, nombre: local.sol, cc: local.cc, tipo: local.tipo,
-          herr: local.herr, cod: local.cod, trab: '', ind: local.ind,
+          herr: local.herr, cod: local.cod, trab: local.trab, ind: local.ind,
           entrega: local.entrega, partes
         });
         local.uuid = r.uuid || '';
@@ -1634,34 +1652,55 @@ async function submitRequest(e) {
   });
 }
 
-function reportModal() {
-  const cons = [...new Set(state.reports.map(r => r.cons).filter(Boolean))].sort();
-  modal('Registrar trabajo de maquinado', `
-    <form id="report-form" class="form" novalidate>
-      <div class="form-grid">
-        <div class="field"><label for="rep-order">Consecutivo / OT</label><input required id="rep-order" name="orderId" list="cons-list" placeholder="Buscar o escribir consecutivo"><datalist id="cons-list">${cons.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
-        <div class="field"><label for="rep-date">Fecha de trabajo</label><input required id="rep-date" name="date" type="date" value="${today()}"></div>
-        <div class="field"><label for="rep-op">Operador</label><input required id="rep-op" name="operator" value="${esc(state.user.name)}"></div>
-        <div class="field"><label for="rep-email">Correo del operador</label><input required id="rep-email" name="email" type="email" value="${esc(state.user.email)}" placeholder="Para avisarte de la aprobación"><span class="error-msg" data-error-for="email"></span></div>
-        <div class="field full"><label for="rep-desc">Descripción del trabajo</label><textarea required id="rep-desc" name="description" placeholder="Trabajo realizado, verificaciones y novedades."></textarea></div>
+// Consecutivos ofrecidos al tornero: OT abiertas "CONS - HERRAMIENTA" + consecutivos ya reportados.
+function reportConsOptions() {
+  const open = (state.ot || []).filter(o => (o.estado || '') === 'Abierta').map(o => o.herr ? `${o.cons} - ${o.herr}` : o.cons);
+  const rep = (state.reports || []).map(r => r.cons).filter(Boolean);
+  return [...new Set([...open, ...rep])].sort().map(c => `<option value="${esc(c)}">`).join('');
+}
+const laticSel = (opts, sel) => opts.map(t => `<option${norm(t) === norm(sel || '') ? ' selected' : ''}>${t}</option>`).join('');
+function reportFormFields(d = {}) {
+  return `<div class="form-grid">
+        <div class="field"><label for="rep-order">Consecutivo / OT</label><input required id="rep-order" name="orderId" list="cons-list" value="${esc(d.orderId || '')}" placeholder="Selecciona el consecutivo" autocomplete="off"><datalist id="cons-list">${reportConsOptions()}</datalist><span class="error-msg" data-error-for="orderId"></span></div>
+        <div class="field"><label for="rep-date">Fecha de trabajo</label><input required id="rep-date" name="date" type="date" value="${esc(d.date || today())}"></div>
+        <div class="field"><label for="rep-op">Operador</label><input required id="rep-op" name="operator" value="${esc(d.operator != null ? d.operator : state.user.name)}"></div>
+        <div class="field"><label for="rep-email">Correo del operador</label><input required id="rep-email" name="email" type="email" value="${esc(d.email != null ? d.email : (state.user.email || ''))}" placeholder="Para avisarte de la aprobación"><span class="error-msg" data-error-for="email"></span></div>
+        <div class="field full"><label for="rep-desc">Descripción del trabajo</label><textarea required id="rep-desc" name="description" placeholder="Trabajo realizado, verificaciones y novedades.">${esc(d.description || '')}</textarea></div>
+        <div class="section-label">Parte y material</div>
+        <div class="field"><label for="rep-part">Parte / componente</label><input id="rep-part" name="part" value="${esc(d.part || '')}" placeholder="Qué se maquinó"></div>
+        <div class="field"><label for="rep-mat">Material</label><select id="rep-mat" name="material">${materialOptions(d.material || '')}</select></div>
+        <div class="field"><label for="rep-diam">Diámetro (mm)</label><select id="rep-diam" name="diam">${diametroOptions(d.diam || '')}</select></div>
+        <div class="field"><label for="rep-long">Longitud (cm)</label><input id="rep-long" name="length" type="number" step="any" min="0" inputmode="decimal" value="${esc(d.long || '')}" placeholder="Libre"></div>
         <div class="section-label">Operación y tiempos</div>
-        <div class="field full"><p class="notice" style="margin:0">Los tiempos van en <b>horas decimales</b>: 0.5 = 30 min · 1.25 = 1 h 15 min · 1.5 = 1 h 30 min.</p></div>
-        <div class="field"><label for="rep-part">Parte / componente</label><input id="rep-part" name="part" placeholder="Qué se maquinó (opcional)"></div>
-        <div class="field"><label for="rep-mat">Material</label><select id="rep-mat" name="material">${materialOptions()}</select></div>
-        <div class="field"><label for="rep-lathe">Torno</label><select id="rep-lathe" name="lathe"><option value="">No aplica</option><option>TORNO 1</option><option>TORNO 2</option></select></div>
-        <div class="field"><label for="rep-mill">Fresa</label><select id="rep-mill" name="mill"><option value="">No aplica</option><option>FRESA 1</option><option>FRESA 2</option></select></div>
-        <div class="field"><label for="rep-rough">Tiempo torno (horas)</label><input id="rep-rough" name="roughing" type="number" step="0.25" min="0" inputmode="decimal" value="0"></div>
-        <div class="field"><label for="rep-milling">Tiempo fresado (horas)</label><input id="rep-milling" name="milling" type="number" step="0.25" min="0" inputmode="decimal" value="0"></div>
-        <div class="field"><label for="rep-heat">Heat No.</label><input id="rep-heat" name="heat" placeholder="Opcional"></div>
-      </div>
-    </form>`,
+        <div class="field full"><p class="notice" style="margin:0">Debes elegir <b>torno o fresa</b> (o ambos) — sin eso no se calcula el costo. Tiempos en <b>horas decimales</b>: 0.5 = 30 min · 1.5 = 1 h 30 min.</p></div>
+        <div class="field"><label for="rep-lathe">Torno</label><select id="rep-lathe" name="lathe"><option value="">No aplica</option>${laticSel(['TORNO 1','TORNO 2'], d.lathe)}</select></div>
+        <div class="field"><label for="rep-rough">Tiempo torno (horas)</label><input id="rep-rough" name="roughing" type="number" step="0.25" min="0" inputmode="decimal" value="${d.roughing != null ? esc(d.roughing) : '0'}"></div>
+        <div class="field"><label for="rep-mill">Fresa</label><select id="rep-mill" name="mill"><option value="">No aplica</option>${laticSel(['FRESA 1','FRESA 2'], d.mill)}</select></div>
+        <div class="field"><label for="rep-milling">Tiempo fresado (horas)</label><input id="rep-milling" name="milling" type="number" step="0.25" min="0" inputmode="decimal" value="${d.milling != null ? esc(d.milling) : '0'}"></div>
+        <div class="field"><label for="rep-heat">Heat No.</label><input id="rep-heat" name="heat" value="${esc(d.heat || '')}" placeholder="Opcional"></div>
+      </div>`;
+}
+function reportModal() {
+  modal('Registrar trabajo de maquinado', `<form id="report-form" class="form" novalidate>${reportFormFields()}</form>`,
     `<button class="secondary" data-close>Cancelar</button>
      <button class="primary" data-submit form="report-form"><span class="btn-label">Guardar reporte</span></button>`);
-
   $('#report-form').addEventListener('submit', submitReport);
 }
+function editReportModal(idx) {
+  const r = state.reports[idx]; if (!r) return;
+  const p = (r.partes && r.partes[0]) || {};
+  const d = {
+    orderId: r.cons, date: r.fecha, operator: r.op, email: state.user.email || '',
+    description: r.desc, part: p.p, material: p.ref, diam: p.diam, long: p.long,
+    lathe: p.torno, roughing: +(durHoras(p.tTorno) || 0).toFixed(2), mill: p.fresa, milling: +(durHoras(p.tFresa) || 0).toFixed(2), heat: p.heat
+  };
+  modal(`Editar reporte · ${esc(r.cons)}`, `<form id="report-form" class="form" novalidate>${reportFormFields(d)}</form>`,
+    `<button class="secondary" data-close>Cancelar</button>
+     <button class="primary" data-submit form="report-form"><span class="btn-label">Guardar y reenviar</span></button>`);
+  $('#report-form').addEventListener('submit', e => submitReport(e, r.uuid));
+}
 
-async function submitReport(e) {
+async function submitReport(e, editUuid) {
   e.preventDefault();
   const form = e.target;
   if (!validateForm(form)) return toast('Revisa los campos marcados.', 'error');
@@ -1669,34 +1708,43 @@ async function submitReport(e) {
   const btn = document.querySelector('#modal-root [data-submit]');
   const p = Object.fromEntries(new FormData(form));
 
+  // Obligatorio: torno o fresa (para poder calcular el costo).
+  if (!p.lathe && !p.mill) return toast('Selecciona torno o fresa (o ambos) para poder calcular el costo.', 'error');
+
+  const consFull = (p.orderId || '').trim();
   await withLoading(btn, 'Guardando…', async () => {
     try {
       // Objeto local con la forma que produce buildReports_ (para "Mis registros").
       const local = {
-        cons: (p.orderId || '').toUpperCase(), op: p.operator || state.user.name,
-        fecha: p.date || today(), estado: 'Pendiente', desc: p.description || '', uuid: '',
+        cons: consFull, op: p.operator || state.user.name,
+        fecha: p.date || today(), estado: 'Pendiente', desc: p.description || '', uuid: editUuid || '',
         insertos: [],
         partes: [{
-          p: p.part || p.material || 'Parte 1', diam: '', long: '', heat: p.heat || '', ref: p.material || '',
+          p: p.part || p.material || 'Parte 1', diam: p.diam || '', long: p.length || '', heat: p.heat || '', ref: p.material || '',
           torno: p.lathe || '', tTorno: hhmmss(p.roughing), perf: '', mand: '', acab: '', pin: '', box: '',
           fresa: p.mill || '', tipoF: '', tFresa: hhmmss(p.milling)
         }]
       };
       if (liveUrl()) {
-        const r = await postConfig({
-          formType: 'crear-reporte',
-          cons: local.cons, fecha: local.fecha, operador: local.op, correo: p.email || '',
-          descripcion: local.desc, parte: p.part || '', torno: p.lathe || '', desbaste: p.roughing || '',
-          fresa: p.mill || '', fresado: p.milling || '', material: p.material || '', heat: p.heat || ''
-        });
-        local.uuid = r.uuid || '';
-        state.reports.unshift(local);
+        const body = {
+          formType: editUuid ? 'editar-reporte' : 'crear-reporte',
+          cons: consFull, consFull, fecha: local.fecha, operador: local.op, correo: p.email || '',
+          descripcion: local.desc, parte: p.part || '', diam: p.diam || '', long: p.length || '',
+          torno: p.lathe || '', desbaste: p.roughing || '', fresa: p.mill || '', fresado: p.milling || '',
+          material: p.material || '', heat: p.heat || ''
+        };
+        if (editUuid) body.uuid = editUuid;
+        const r = await postConfig(body);
+        local.uuid = r.uuid || editUuid || '';
+        if (editUuid) { const i = state.reports.findIndex(x => x.uuid === editUuid); if (i >= 0) state.reports[i] = local; else state.reports.unshift(local); }
+        else state.reports.unshift(local);
         closeModal();
         render();
-        toast(r.mailWarning ? 'Reporte guardado (aviso de correo pendiente).' : 'Reporte guardado. Se notificó al aprobador.');
+        toast(r.mailWarning ? 'Reporte guardado (aviso de correo pendiente).' : (editUuid ? 'Reporte actualizado y reenviado.' : 'Reporte guardado. Se notificó al aprobador.'));
         setTimeout(() => refreshLive(false), 2500);
       } else {
-        state.reports.unshift(local);
+        if (editUuid) { const i = state.reports.findIndex(x => x.uuid === editUuid); if (i >= 0) state.reports[i] = local; else state.reports.unshift(local); }
+        else state.reports.unshift(local);
         closeModal();
         render();
         toast('Reporte guardado en modo demostración.');
@@ -1835,8 +1883,8 @@ function editSolModal(idx) {
       <div class="form-grid">
         <div class="field full"><label>Herramienta</label><input name="herr" value="${esc(s.herr||'')}"></div>
         <div class="field"><label>Tipo de OT</label><select name="tipo">${tipos.map(t=>`<option${t===s.tipo?' selected':''}>${esc(t)}</option>`).join('')}</select></div>
-        <div class="field"><label>Tipo de trabajo</label><input name="trab" value="${esc(s.trab||'')}"></div>
-        <div class="field"><label>Centro de costos</label><input name="cc" value="${esc(s.cc||'')}"></div>
+        <div class="field"><label>Tipo de trabajo</label><select name="trab">${workTypeOptions(s.trab||'')}</select></div>
+        <div class="field"><label>Centro de costos</label><input name="cc" list="cc-list-edit" value="${esc(s.cc||'')}" placeholder="Código o área…" autocomplete="off"><datalist id="cc-list-edit">${centroOptions()}</datalist></div>
         <div class="field"><label>Código de herramienta</label><input name="cod" value="${esc(s.cod||'')}"></div>
         <div class="field"><label>Fecha requerida</label><input type="date" name="entrega" value="${esc(s.entrega||'')}"></div>
         <div class="field full"><label>Indicaciones</label><textarea name="ind" rows="3">${esc(s.ind||'')}</textarea></div>
@@ -1892,7 +1940,12 @@ function openReport(idx) {
       ${partes ? `<div class="section-label">Partes trabajadas (${r.partes.length})</div>${partes}` : ''}
       ${insertos}
     </div>`,
-    `<button class="secondary" data-close>Cerrar</button>`);
+    `<button class="secondary" data-close>Cerrar</button>
+     ${canEditReport(r) ? `<button class="primary" data-action="edit-report" data-idx="${idx}">Editar reporte</button>` : ''}`);
+}
+// El tornero puede editar su reporte solo si NO está aprobado (Pendiente o Rechazado).
+function canEditReport(r) {
+  return state.user.role === 'Operador' && isMe(r.op) && /pendiente|rechaz/i.test(r.estado || '');
 }
 
 function approveRequest(id) {
@@ -2073,8 +2126,17 @@ $('#free-form').addEventListener('submit', e => {
 $('#admin-form').addEventListener('submit', e => {
   e.preventDefault();
   // Sin candado por ahora: se validará contra la hoja de contraseñas al conectar el backend.
-  state.user = { name: 'Administrador', role: 'Administrador' };
+  state.user = { name: 'Carlos Hernández', role: 'Administrador' };
   start();
+});
+// Mostrar / ocultar la contraseña de administrador.
+$('#admin-pass-toggle').addEventListener('click', () => {
+  const inp = $('#admin-pass'), btn = $('#admin-pass-toggle');
+  const show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  btn.textContent = show ? 'Ocultar' : 'Ver';
+  btn.setAttribute('aria-pressed', show ? 'true' : 'false');
+  inp.focus();
 });
 
 /* ---------- Start ---------- */
@@ -2139,6 +2201,7 @@ document.addEventListener('click', e => {
     const idx = t.dataset.idx;
     if (t.dataset.action === 'open-order') openOrder(+idx, t.dataset.src);
     if (t.dataset.action === 'open-report') openReport(+idx);
+    if (t.dataset.action === 'edit-report') editReportModal(+idx);
     if (t.dataset.action === 'approve-report') approveReport(+idx);
     if (t.dataset.action === 'reject-report') rejectReport(+idx);
     if (t.dataset.action === 'accept-sol') openAcceptSolicitud(+idx);
