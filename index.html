@@ -1793,7 +1793,11 @@ async function submitReport(e, editUuid) {
   // Obligatorio: torno o fresa (para poder calcular el costo).
   if (!p.lathe && !p.mill) return toast('Selecciona torno o fresa (o ambos) para poder calcular el costo.', 'error');
 
-  const consFull = (p.orderId || '').trim();
+  let consFull = (p.orderId || '').trim();
+  if (consFull && consFull.indexOf(' - ') < 0) {   // completar con la herramienta si vino corto
+    const o = (state.ot || []).find(x => otCode(x.cons) === otCode(consFull));
+    if (o && o.herr) consFull = otCode(consFull) + ' - ' + o.herr;
+  }
   await withLoading(btn, 'Guardando…', async () => {
     try {
       // Objeto local con la forma que produce buildReports_ (para "Mis registros").
