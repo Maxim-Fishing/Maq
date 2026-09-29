@@ -665,21 +665,28 @@ function operatorEmail(name) {
 const isInactivo = name => (state.inactivos || []).includes(norm(name));
 // Torneros activos (para asignar).
 const tornerosActivos = () => personalTorneros().filter(t => !isInactivo(t.name));
-// Tornero asignado a una OT (por su código) o '' si ninguno.
-const asignadoDe = cons => (state.asignaciones || {})[otCode(cons)] || '';
-// <option> de torneros para un <select> de asignación.
-const tornerosOptions = (sel = '') =>
-  `<option value="">— Sin asignar —</option>` +
-  tornerosActivos().map(t => `<option value="${esc(t.name)}"${norm(t.name) === norm(sel) ? ' selected' : ''}>${esc(t.name)}</option>`).join('');
-// Asigna (o quita) una OT a un tornero y notifica.
-async function asignar(cons, tornero, herr) {
+// Torneros asignados a una OT (arreglo; tolera el formato antiguo de un solo nombre).
+const asignadosDe = cons => { const v = (state.asignaciones || {})[otCode(cons)]; return !v ? [] : (Array.isArray(v) ? v : [v]); };
+const asignadaAMi = cons => asignadosDe(cons).some(isMe);
+// Checkboxes de torneros activos (multi-selección) para asignar.
+function tornerosCheckboxes(sel = []) {
+  const selN = (sel || []).map(norm);
+  const list = tornerosActivos();
+  if (!list.length) return '<span class="muted">Carga la configuración o añade torneros en Configuración.</span>';
+  return `<div class="asig-box" style="display:flex;flex-wrap:wrap;gap:6px 16px;margin:4px 0">${list.map(t =>
+    `<label class="asig-item" style="display:inline-flex;align-items:center;gap:6px;font-weight:500;cursor:pointer"><input type="checkbox" class="asig-chk" value="${esc(t.name)}"${selN.includes(norm(t.name)) ? ' checked' : ''}> ${esc(t.name)}</label>`).join('')}</div>`;
+}
+const readAsigChecks = () => [...document.querySelectorAll('.asig-chk:checked')].map(c => c.value);
+// Asigna (lista completa nueva; vacía = quitar) y notifica a los nuevos.
+async function asignar(cons, torneros, herr) {
   if (!liveUrl()) { toast('Sin conexión en vivo.', 'error'); return false; }
   try {
-    const r = await postConfig({ formType: 'asignar', cons, tornero, herr: herr || '' });
+    const r = await postConfig({ formType: 'asignar', cons, torneros, herr: herr || '' });
     if (r.asignaciones) state.asignaciones = r.asignaciones;
+    const list = r.torneros || [];
     toast(r.mailWarning
-      ? 'Asignada, pero el aviso no salió: ' + r.mailWarning
-      : (tornero ? `Asignada a ${tornero}. Se le notificó.` : 'Asignación retirada.'),
+      ? 'Asignada, pero un aviso falló: ' + r.mailWarning
+      : (list.length ? `Asignada a: ${list.join(', ')}.` : 'Asignación retirada.'),
       r.mailWarning ? 'error' : 'success');
     return true;
   } catch (e) { toast('No se pudo asignar: ' + e.message, 'error'); return false; }
@@ -1462,7 +1469,7 @@ function renderOrders() {
     ? rows.slice(0,1000).map(o => `
       <tr class="${estadoRowClass(o.estado)}">
         <td data-label="Consecutivo">${o.cons ? `<b>${esc(o.cons)}</b>` : `<span class="muted">${esc(fmtDate(o.fecha))}</span>`}</td>
-        <td data-label="Herramienta" class="subject" style="white-space:normal">${esc(o.herr || '—')}${asignadoDe(o.cons) ? `<br><span class="muted" style="font-weight:400;font-size:12px">👤 ${esc(asignadoDe(o.cons))}</span>` : ''}</td>
+        <td data-label="Herramienta" class="subject" style="white-space:normal">${esc(o.herr || '—')}${asignadosDe(o.cons).length ? `<br><span class="muted" style="font-weight:400;font-size:12px">👤 ${esc(asignadosDe(o.cons).join(', '))}</span>` : ''}</td>
         <td data-label="Solicitante">${esc(o.sol || '—')}</td>
         <td data-label="Tipo">${tipoPill(o.tipo)}</td>
         <td data-label="Estado">${o.estado ? statusPill(o.estado) : '<span class="muted">—</span>'}</td>
@@ -1506,10 +1513,10 @@ function renderPending() {
   $('#pending-table').innerHTML = rows.length
     ? rows.map(p => {
         const n = reportsForCode(otCode(p.cons));
-        const asig = asignadoDe(p.cons), mia = asig && isMe(asig);
-        const asigBadge = asig
-          ? (mia ? `<br><span class="pill" style="background:var(--orange-soft);color:#9c3d00;font-weight:700">★ Asignada a ti</span>`
-                 : `<br><span class="muted" style="font-weight:400;font-size:12px">👤 Asignada a ${esc(asig)}</span>`)
+        const asig = asignadosDe(p.cons), mia = asig.some(isMe);
+        const asigBadge = asig.length
+          ? (mia ? `<br><span class="pill" style="background:var(--orange-soft);color:#9c3d00;font-weight:700">★ Asignada a ti</span>${asig.length > 1 ? `<span class="muted" style="font-size:12px"> · con ${esc(asig.filter(n => !isMe(n)).join(', '))}</span>` : ''}`
+                 : `<br><span class="muted" style="font-weight:400;font-size:12px">👤 Asignada a ${esc(asig.join(', '))}</span>`)
           : '';
         return `
       <tr${mia ? ' style="box-shadow:inset 3px 0 var(--orange)"' : ''}>
@@ -1906,15 +1913,13 @@ function openOrder(idx, src) {
     : '';
 
   // Asignación (solo OT). El admin puede asignar/cambiar; todos ven a quién está asignada.
-  const asignActual = (src === 'ot' && o.cons) ? asignadoDe(o.cons) : '';
+  const asignActual = (src === 'ot' && o.cons) ? asignadosDe(o.cons) : [];
   const asignHtml = (src === 'ot' && o.cons) ? `
       <div class="section-label">Asignación</div>
-      ${asignActual ? `<div class="dl-row"><span>Asignada a</span><b>${esc(asignActual)}</b></div>` : '<p class="muted" style="margin:0 0 6px">Sin asignar.</p>'}
+      ${asignActual.length ? `<div class="dl-row"><span>Asignada a</span><b>${esc(asignActual.join(', '))}</b></div>` : '<p class="muted" style="margin:0 0 6px">Sin asignar.</p>'}
       ${state.user.role === 'Administrador' ? `
-        <div class="field" style="display:flex;gap:8px;align-items:center;margin-top:6px">
-          <select id="assign-tornero" style="flex:1">${tornerosOptions(asignActual)}</select>
-          <button class="primary" data-action="assign-order" data-idx="${idx}" data-src="${src}" data-cons="${esc(o.cons)}" data-herr="${esc(o.herr || '')}">Asignar</button>
-        </div>` : ''}` : '';
+        <div id="assign-box">${tornerosCheckboxes(asignActual)}</div>
+        <button class="primary" data-action="assign-order" data-idx="${idx}" data-src="${src}" data-cons="${esc(o.cons)}" data-herr="${esc(o.herr || '')}" style="margin-top:8px">Guardar asignación</button>` : ''}` : '';
 
   modal(`${o.cons ? esc(o.cons) + ' · ' : ''}${esc(o.herr || 'Orden de trabajo')}`, `
     <div class="form detail">
@@ -1942,15 +1947,15 @@ function openOrder(idx, src) {
         ${canEditSol ? `<button class="primary" data-action="edit-sol" data-idx="${idx}">Editar solicitud</button>` : ''}
         <button class="secondary" data-close>Cerrar</button>`;
     })());
-  // Poblar el selector de torneros si la config no estaba cargada.
+  // Poblar los torneros si la config no estaba cargada.
   if (src === 'ot' && o.cons && state.user.role === 'Administrador' && !state.configVars)
-    fetchConfig().then(() => { const sel = $('#assign-tornero'); if (sel) sel.innerHTML = tornerosOptions(asignadoDe(o.cons)); }).catch(() => {});
+    fetchConfig().then(() => { const box = $('#assign-box'); if (box) box.innerHTML = tornerosCheckboxes(asignadosDe(o.cons)); }).catch(() => {});
 }
 
-// Asigna la OT del panel Ver orden y reabre el panel con el cambio.
+// Asigna la OT del panel Ver orden (uno o varios torneros) y reabre el panel con el cambio.
 async function assignOrder(idx, src, cons, herr) {
-  const sel = $('#assign-tornero'); const tornero = sel ? sel.value : '';
-  const ok = await asignar(cons, tornero, herr);
+  const torneros = readAsigChecks();
+  const ok = await asignar(cons, torneros, herr);
   if (ok) { render(); openOrder(+idx, src); }
 }
 
@@ -2099,9 +2104,9 @@ function openAcceptSolicitud(idx) {
       ${dl('Fecha requerida', fmtDate(s.entrega))}
       ${s.ind ? `<div class="dl-block"><span>Indicaciones del cliente</span><p>${esc(s.ind)}</p></div>` : ''}
       ${partes}
-      <div class="section-label">Asignar a un tornero (opcional)</div>
-      <div class="field"><select id="accept-tornero">${tornerosOptions()}</select></div>
-      <p class="muted" style="margin:2px 0 0">Si eliges uno, se le notifica por correo. Puedes dejarlo sin asignar y hacerlo luego desde la orden.</p>
+      <div class="section-label">Asignar a torneros (opcional)</div>
+      <div id="accept-tornero-box">${tornerosCheckboxes()}</div>
+      <p class="muted" style="margin:2px 0 0">Marca uno o varios; a cada uno se le notifica. Puedes dejarlo sin asignar y hacerlo luego desde la orden.</p>
       <div class="section-label">Clasificación de la OT</div>
       <p class="muted" style="margin:0 0 4px">Como líder de maquinado, elige cómo generar el consecutivo. Esto crea la OT en tu sistema.</p>
     </div>`,
@@ -2111,8 +2116,8 @@ function openAcceptSolicitud(idx) {
      <button class="primary" data-accept-prefix="PR" style="background:var(--green);color:#fff">Programada (PR)</button>`);
   $$('#modal-root [data-accept-prefix]').forEach(b =>
     b.addEventListener('click', () => acceptSolicitud(idx, b.dataset.acceptPrefix)));
-  // Poblar el selector de torneros si la config no estaba cargada.
-  if (!state.configVars) fetchConfig().then(() => { const sel = $('#accept-tornero'); if (sel) sel.innerHTML = tornerosOptions(); }).catch(() => {});
+  // Poblar los torneros si la config no estaba cargada.
+  if (!state.configVars) fetchConfig().then(() => { const box = $('#accept-tornero-box'); if (box) box.innerHTML = tornerosCheckboxes(); }).catch(() => {});
 }
 
 async function acceptSolicitud(idx, prefijo) {
@@ -2121,14 +2126,14 @@ async function acceptSolicitud(idx, prefijo) {
   const prog = {PR:'Programada', NP:'No programada', RE:'Reparo'}[prefijo] || prefijo;
   if (!liveUrl()) { closeModal(); toast('Sin conexión en vivo: no se puede aceptar la solicitud ahora.', 'error'); return; }
   if (!s.uuid) { toast('Esta solicitud no tiene UUID; actualiza los datos e intenta de nuevo.', 'error'); return; }
-  const tornero = ($('#accept-tornero') && $('#accept-tornero').value) || '';
+  const torneros = readAsigChecks();
   const btn = document.querySelector(`#modal-root [data-accept-prefix="${prefijo}"]`);
   await withLoading(btn, 'Aceptando…', async () => {
     try {
       const r = await postConfig({ formType:'aceptar-solicitud', uuid: s.uuid, prefijo });
       s.estado = 'Aprobada';
-      // Asignación opcional al aceptar.
-      if (tornero && r.consecutivo) await asignar(r.consecutivo, tornero, s.herr);
+      // Asignación opcional al aceptar (uno o varios torneros).
+      if (torneros.length && r.consecutivo) await asignar(r.consecutivo, torneros, s.herr);
       closeModal(); renderApprovals(); render();
       toast(`Solicitud aceptada como ${prog}. Consecutivo ${r.consecutivo || ''} generado.`);
       setTimeout(() => refreshLive(false), 2500);
