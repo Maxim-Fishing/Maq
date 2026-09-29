@@ -236,24 +236,30 @@
     #refresh-btn{padding:9px}
     .user #user-role,.user #user-name{display:none}
     .user .avatar{display:grid}
-    .content{padding:16px}
+    .content{padding:14px}
     .view-head{display:block}
-    .actions{margin-top:14px}
-    .stats{grid-template-columns:1fr;gap:10px}
-    .stat{padding:14px}
+    .view-head h2{font-size:19px;line-height:1.2}
+    .view-head p{font-size:12.5px}
+    .card-title{padding:11px 13px;font-size:15px}
+    .card-body{padding:11px 13px}
+    .actions{margin-top:12px}
+    .stats{grid-template-columns:1fr;gap:9px}
+    .stat{padding:12px}
 
     /* Tablas → tarjetas */
     .table-wrap table{min-width:0}
     .table-wrap thead{display:none}
     .table-wrap table,.table-wrap tbody,.table-wrap tr,.table-wrap td{display:block;width:100%}
-    .table-wrap tr{border:1px solid var(--line);border-radius:var(--r-lg);margin-bottom:10px;padding:10px 12px;background:#fff}
+    .table-wrap tr{border:1px solid var(--line);border-radius:var(--r-lg);margin-bottom:8px;padding:8px 11px;background:#fff;font-size:13px}
     .table-wrap tr.row-abierta{background:var(--red-soft)}.table-wrap tr.row-abierta>td{background:transparent}
     .table-wrap tr.row-cerrada{background:var(--green-soft)}.table-wrap tr.row-cerrada>td{background:transparent}
-    .table-wrap td{display:flex;justify-content:space-between;align-items:center;gap:12px;border:0;padding:7px 0;white-space:normal}
+    .table-wrap td{display:flex;justify-content:space-between;align-items:center;gap:12px;border:0;padding:4px 0;white-space:normal}
     .table-wrap td:not(:last-child){border-bottom:1px dashed #eef0f3}
-    .table-wrap td::before{content:attr(data-label);font-weight:750;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em;flex-shrink:0}
+    .table-wrap td::before{content:attr(data-label);font-weight:700;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;flex-shrink:0}
     .table-wrap td.subject{font-weight:650}
     .table-wrap td .pill{margin-left:auto}
+    .table-wrap td .primary,.table-wrap td .secondary{padding:7px 12px;font-size:13px}
+    .table-wrap td[data-label="Acción"],.table-wrap td[data-label=""]{flex-wrap:wrap;justify-content:flex-end;gap:6px}
 
     .modal-backdrop{padding:0}
     .modal{max-height:100vh;height:100%;border-radius:0}
