@@ -605,6 +605,7 @@ const state = {
   centros: [],      // Centros de costo {codigo, desc} (HT Y CC)
   herramientas: [], // Lista maestra de herramientas (HT Y CC)
   inactivos: [],    // Nombres (normalizados) de torneros desactivados
+  asignaciones: {}, // { códigoOT: nombreTornero }
   requests: [],
   activity: [],
   configVars: null, // Variables de costo del BALANCE: {_sheets, personal, material, energia}
@@ -662,6 +663,27 @@ function operatorEmail(name) {
   return t ? t.email : '';
 }
 const isInactivo = name => (state.inactivos || []).includes(norm(name));
+// Torneros activos (para asignar).
+const tornerosActivos = () => personalTorneros().filter(t => !isInactivo(t.name));
+// Tornero asignado a una OT (por su código) o '' si ninguno.
+const asignadoDe = cons => (state.asignaciones || {})[otCode(cons)] || '';
+// <option> de torneros para un <select> de asignación.
+const tornerosOptions = (sel = '') =>
+  `<option value="">— Sin asignar —</option>` +
+  tornerosActivos().map(t => `<option value="${esc(t.name)}"${norm(t.name) === norm(sel) ? ' selected' : ''}>${esc(t.name)}</option>`).join('');
+// Asigna (o quita) una OT a un tornero y notifica.
+async function asignar(cons, tornero, herr) {
+  if (!liveUrl()) { toast('Sin conexión en vivo.', 'error'); return false; }
+  try {
+    const r = await postConfig({ formType: 'asignar', cons, tornero, herr: herr || '' });
+    if (r.asignaciones) state.asignaciones = r.asignaciones;
+    toast(r.mailWarning
+      ? 'Asignada, pero el aviso no salió: ' + r.mailWarning
+      : (tornero ? `Asignada a ${tornero}. Se le notificó.` : 'Asignación retirada.'),
+      r.mailWarning ? 'error' : 'success');
+    return true;
+  } catch (e) { toast('No se pudo asignar: ' + e.message, 'error'); return false; }
+}
 
 /* ---------- Fuente de datos (embebida + en vivo) ----------
    Hidrata el estado desde un objeto {orders, reports, pending, operators, requesters}.
@@ -680,6 +702,7 @@ function applyData(data) {
   if (data.centros && data.centros.length) state.centros = data.centros;
   if (data.herramientas && data.herramientas.length) state.herramientas = data.herramientas;
   if (data.inactivos) state.inactivos = data.inactivos;
+  if (data.asignaciones) state.asignaciones = data.asignaciones;
   if (data.costsByMonth && data.costsByMonth.length) { state.costs = data.costsByMonth; state.costsIsLive = true; }
   REPORTED = new Set(state.reports.map(r => otCode(r.cons)).filter(Boolean));
 
@@ -1439,7 +1462,7 @@ function renderOrders() {
     ? rows.slice(0,1000).map(o => `
       <tr class="${estadoRowClass(o.estado)}">
         <td data-label="Consecutivo">${o.cons ? `<b>${esc(o.cons)}</b>` : `<span class="muted">${esc(fmtDate(o.fecha))}</span>`}</td>
-        <td data-label="Herramienta" class="subject">${esc(o.herr || '—')}</td>
+        <td data-label="Herramienta" class="subject" style="white-space:normal">${esc(o.herr || '—')}${asignadoDe(o.cons) ? `<br><span class="muted" style="font-weight:400;font-size:12px">👤 ${esc(asignadoDe(o.cons))}</span>` : ''}</td>
         <td data-label="Solicitante">${esc(o.sol || '—')}</td>
         <td data-label="Tipo">${tipoPill(o.tipo)}</td>
         <td data-label="Estado">${o.estado ? statusPill(o.estado) : '<span class="muted">—</span>'}</td>
@@ -1483,10 +1506,15 @@ function renderPending() {
   $('#pending-table').innerHTML = rows.length
     ? rows.map(p => {
         const n = reportsForCode(otCode(p.cons));
+        const asig = asignadoDe(p.cons), mia = asig && isMe(asig);
+        const asigBadge = asig
+          ? (mia ? `<br><span class="pill" style="background:var(--orange-soft);color:#9c3d00;font-weight:700">★ Asignada a ti</span>`
+                 : `<br><span class="muted" style="font-weight:400;font-size:12px">👤 Asignada a ${esc(asig)}</span>`)
+          : '';
         return `
-      <tr>
+      <tr${mia ? ' style="box-shadow:inset 3px 0 var(--orange)"' : ''}>
         <td data-label="Consecutivo"><b>${esc(p.cons)}</b></td>
-        <td data-label="Herramienta / trabajo" class="subject" style="white-space:normal;min-width:200px"><div><b>${esc(p.herr || '—')}</b>${p.ind ? `<br><span class="muted" style="font-weight:400;font-size:12px">${esc(p.ind)}</span>` : ''}</div></td>
+        <td data-label="Herramienta / trabajo" class="subject" style="white-space:normal;min-width:200px"><div><b>${esc(p.herr || '—')}</b>${p.ind ? `<br><span class="muted" style="font-weight:400;font-size:12px">${esc(p.ind)}</span>` : ''}${asigBadge}</div></td>
         <td data-label="Solicitante">${esc(p.sol || '—')}</td>
         <td data-label="Entrega">${esc(fmtDate(p.entrega))}</td>
         <td data-label="Reportes">${n ? `<span class="pill closed">${n}</span>` : '<span class="muted">—</span>'}</td>
@@ -1681,8 +1709,9 @@ async function submitRequest(e) {
         closeModal();
         render();
         toast(r.mailWarning
-          ? 'Solicitud enviada (aviso de correo pendiente).'
-          : 'Solicitud enviada. Se notificó al aprobador.');
+          ? 'Solicitud guardada, pero el correo falló: ' + r.mailWarning
+          : 'Solicitud enviada. Se notificó al aprobador.',
+          r.mailWarning ? 'error' : 'success');
       } else {
         // Sin conexión en vivo: guarda solo en esta muestra (modo demostración).
         state.solicitudes.unshift(local);
@@ -1876,6 +1905,17 @@ function openOrder(idx, src) {
        ${orderCostHtml(o.cons)}`
     : '';
 
+  // Asignación (solo OT). El admin puede asignar/cambiar; todos ven a quién está asignada.
+  const asignActual = (src === 'ot' && o.cons) ? asignadoDe(o.cons) : '';
+  const asignHtml = (src === 'ot' && o.cons) ? `
+      <div class="section-label">Asignación</div>
+      ${asignActual ? `<div class="dl-row"><span>Asignada a</span><b>${esc(asignActual)}</b></div>` : '<p class="muted" style="margin:0 0 6px">Sin asignar.</p>'}
+      ${state.user.role === 'Administrador' ? `
+        <div class="field" style="display:flex;gap:8px;align-items:center;margin-top:6px">
+          <select id="assign-tornero" style="flex:1">${tornerosOptions(asignActual)}</select>
+          <button class="primary" data-action="assign-order" data-idx="${idx}" data-src="${src}" data-cons="${esc(o.cons)}" data-herr="${esc(o.herr || '')}">Asignar</button>
+        </div>` : ''}` : '';
+
   modal(`${o.cons ? esc(o.cons) + ' · ' : ''}${esc(o.herr || 'Orden de trabajo')}`, `
     <div class="form detail">
       ${dl('Consecutivo', o.cons)}
@@ -1891,6 +1931,7 @@ function openOrder(idx, src) {
       ${dl('Fecha requerida', fmtDate(o.entrega))}
       ${o.ind ? `<div class="dl-block"><span>Indicaciones del cliente</span><p>${esc(o.ind)}</p></div>` : ''}
       ${partes}
+      ${asignHtml}
       ${reportesHtml}
     </div>`,
     (() => {
@@ -1901,6 +1942,16 @@ function openOrder(idx, src) {
         ${canEditSol ? `<button class="primary" data-action="edit-sol" data-idx="${idx}">Editar solicitud</button>` : ''}
         <button class="secondary" data-close>Cerrar</button>`;
     })());
+  // Poblar el selector de torneros si la config no estaba cargada.
+  if (src === 'ot' && o.cons && state.user.role === 'Administrador' && !state.configVars)
+    fetchConfig().then(() => { const sel = $('#assign-tornero'); if (sel) sel.innerHTML = tornerosOptions(asignadoDe(o.cons)); }).catch(() => {});
+}
+
+// Asigna la OT del panel Ver orden y reabre el panel con el cambio.
+async function assignOrder(idx, src, cons, herr) {
+  const sel = $('#assign-tornero'); const tornero = sel ? sel.value : '';
+  const ok = await asignar(cons, tornero, herr);
+  if (ok) { render(); openOrder(+idx, src); }
 }
 
 // Cerrar orden (solo jefe de maquinado / administrador). Mueve la OT a Cerrada en el backend.
@@ -2048,6 +2099,9 @@ function openAcceptSolicitud(idx) {
       ${dl('Fecha requerida', fmtDate(s.entrega))}
       ${s.ind ? `<div class="dl-block"><span>Indicaciones del cliente</span><p>${esc(s.ind)}</p></div>` : ''}
       ${partes}
+      <div class="section-label">Asignar a un tornero (opcional)</div>
+      <div class="field"><select id="accept-tornero">${tornerosOptions()}</select></div>
+      <p class="muted" style="margin:2px 0 0">Si eliges uno, se le notifica por correo. Puedes dejarlo sin asignar y hacerlo luego desde la orden.</p>
       <div class="section-label">Clasificación de la OT</div>
       <p class="muted" style="margin:0 0 4px">Como líder de maquinado, elige cómo generar el consecutivo. Esto crea la OT en tu sistema.</p>
     </div>`,
@@ -2057,6 +2111,8 @@ function openAcceptSolicitud(idx) {
      <button class="primary" data-accept-prefix="PR" style="background:var(--green);color:#fff">Programada (PR)</button>`);
   $$('#modal-root [data-accept-prefix]').forEach(b =>
     b.addEventListener('click', () => acceptSolicitud(idx, b.dataset.acceptPrefix)));
+  // Poblar el selector de torneros si la config no estaba cargada.
+  if (!state.configVars) fetchConfig().then(() => { const sel = $('#accept-tornero'); if (sel) sel.innerHTML = tornerosOptions(); }).catch(() => {});
 }
 
 async function acceptSolicitud(idx, prefijo) {
@@ -2065,11 +2121,14 @@ async function acceptSolicitud(idx, prefijo) {
   const prog = {PR:'Programada', NP:'No programada', RE:'Reparo'}[prefijo] || prefijo;
   if (!liveUrl()) { closeModal(); toast('Sin conexión en vivo: no se puede aceptar la solicitud ahora.', 'error'); return; }
   if (!s.uuid) { toast('Esta solicitud no tiene UUID; actualiza los datos e intenta de nuevo.', 'error'); return; }
+  const tornero = ($('#accept-tornero') && $('#accept-tornero').value) || '';
   const btn = document.querySelector(`#modal-root [data-accept-prefix="${prefijo}"]`);
   await withLoading(btn, 'Aceptando…', async () => {
     try {
       const r = await postConfig({ formType:'aceptar-solicitud', uuid: s.uuid, prefijo });
       s.estado = 'Aprobada';
+      // Asignación opcional al aceptar.
+      if (tornero && r.consecutivo) await asignar(r.consecutivo, tornero, s.herr);
       closeModal(); renderApprovals(); render();
       toast(`Solicitud aceptada como ${prog}. Consecutivo ${r.consecutivo || ''} generado.`);
       setTimeout(() => refreshLive(false), 2500);
@@ -2251,6 +2310,7 @@ document.addEventListener('click', e => {
     if (t.dataset.action === 'reject') rejectRequest(id);
     if (t.dataset.action === 'toggle-user') toggleUser(+idx);
     if (t.dataset.action === 'toggle-op') toggleOp(t.dataset.name, t.dataset.activo === '0');
+    if (t.dataset.action === 'assign-order') assignOrder(t.dataset.idx, t.dataset.src, t.dataset.cons, t.dataset.herr);
     if (t.dataset.action === 'cfg-save') saveConfig();
     if (t.dataset.action === 'cfg-add') openAddConfig(t.dataset.key);
     if (t.dataset.action === 'appr-tab') { state.apprTab = t.dataset.tab; renderApprovals(); }
