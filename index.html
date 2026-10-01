@@ -620,6 +620,23 @@ const state = {
 // Consecutivos que ya tienen al menos un reporte
 let REPORTED = new Set();
 
+// Enlace directo desde el correo: {accept:uuid} o {report:uuid}. Se resuelve al cargar los datos.
+let deepLink = null, deepLinkTries = 0;
+function handleDeepLink() {
+  if (!deepLink) return;
+  if (deepLink.accept) {
+    const idx = state.solicitudes.findIndex(s => s.uuid === deepLink.accept);
+    if (idx >= 0) { deepLink = null; openAcceptSolicitud(idx); return; }
+  } else if (deepLink.report) {
+    const idx = state.reports.findIndex(r => r.uuid === deepLink.report);
+    if (idx >= 0) { deepLink = null; openReport(idx); return; }
+  }
+  // No encontrado aún. Si ya hay datos en vivo, tras un par de intentos avisamos.
+  if (state.solicitudes.length || state.reports.length) {
+    if (++deepLinkTries >= 2) { deepLink = null; toast('No se encontró esa orden (quizá ya fue procesada).', 'error'); }
+  }
+}
+
 // Materiales soportados por la matriz de costos (hoja MATERIAL del BALANCE — nombres EXACTOS).
 const MATERIALS = ['4140', '4340', 'INOXIDABLE', 'ALUMINIO', 'BRONCE', 'TEFLON'];
 // Diámetros en mm de la matriz de costos (col B de MATERIAL).
@@ -728,6 +745,7 @@ function applyData(data) {
     repOp.value = cur;
   }
   if (!$('#app').classList.contains('hidden')) render();
+  handleDeepLink();
 }
 
 /* ---------- Datos en vivo (Web App de Apps Script) ----------
@@ -2048,7 +2066,13 @@ function openReport(idx) {
       ${insertos}
     </div>`,
     `<button class="secondary" data-close>Cerrar</button>
-     ${canEditReport(r) ? `<button class="primary" data-action="edit-report" data-idx="${idx}">Editar reporte</button>` : ''}`);
+     ${canEditReport(r) ? `<button class="primary" data-action="edit-report" data-idx="${idx}">Editar reporte</button>` : ''}
+     ${canApproveReport(r) ? `<button class="secondary" data-action="reject-report" data-idx="${idx}" style="color:var(--red,#c23b3b)">Rechazar</button>
+     <button class="primary" data-action="approve-report" data-idx="${idx}" style="background:var(--green);color:#fff">Aprobar</button>` : ''}`);
+}
+// El líder (Administrador) puede aprobar/rechazar un reporte mientras esté pendiente.
+function canApproveReport(r) {
+  return state.user.role === 'Administrador' && /pendiente/i.test(r.estado || '');
 }
 // El tornero puede editar su reporte solo si NO está aprobado (Pendiente o Rechazado).
 function canEditReport(r) {
@@ -2160,7 +2184,7 @@ function approveReport(idx) {
     try {
       await postConfig({ formType:'aprobar-reporte', uuid: r.uuid });
       r.estado = 'Aprobado';
-      render();
+      closeModal(); render();
       toast('Trabajo aprobado. Se notificó al operador.');
       setTimeout(() => refreshLive(false), 2500);
     } catch (e) { toast('No se pudo aprobar: ' + e.message, 'error'); }
@@ -2372,6 +2396,22 @@ if (token && !DEMO) {
     })
     .catch(() => toast('El enlace ya no es válido. Solicita uno nuevo.', 'error'));
 }
+
+/* ---------- Enlace directo desde el correo (?accept=UUID / ?report=UUID) ----------
+   El líder llega desde el correo y entra directo a aceptar la solicitud o
+   aprobar/rechazar el reporte, sin volver a ingresar. Entra como Administrador. */
+(function initDeepLink() {
+  const q = new URLSearchParams(location.search);
+  const accept = q.get('accept');
+  const report = q.get('report');
+  if (!accept && !report) return;
+  deepLink = accept ? { accept } : { report };
+  // Limpia la URL para que no quede el UUID visible ni se reactive al recargar.
+  try { history.replaceState(null, '', location.pathname); } catch (_) {}
+  // Auto-ingreso como líder de maquinado.
+  state.user = { name: 'Carlos Hernández', role: 'Administrador' };
+  start();
+})();
 </script>
 </body>
 </html>
