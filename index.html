@@ -685,6 +685,35 @@ function operatorEmail(name) {
   const t = personalTorneros().find(x => norm(x.name) === norm(name));
   return t ? t.email : '';
 }
+// Teléfono/WhatsApp guardado de un perfil (por correo o por nombre), para prellenar el campo.
+function telDe(correo, nombre) {
+  const m = state.telefonos || {};
+  const e = (correo || '').trim().toLowerCase();
+  if (e && m['email:' + e]) return m['email:' + e];
+  const n = norm(nombre || '');
+  if (n && m['name:' + n]) return m['name:' + n];
+  return '';
+}
+// Normaliza a formato WhatsApp (celular CO de 10 dígitos que empieza por 3 → +57). '' si no sirve.
+function normTel(v) {
+  let d = String(v == null ? '' : v).replace(/\D/g, '');
+  if (!d) return '';
+  if (d.indexOf('00') === 0) d = d.slice(2);
+  d = d.replace(/^0+/, '');
+  if (d.length === 10 && d.charAt(0) === '3') return '57' + d;
+  if (d.length === 12 && d.indexOf('57') === 0) return d;
+  if (d.length >= 11 && d.length <= 13) return d;
+  return '';
+}
+// Recuerda el teléfono en el estado local (mismo esquema de claves que el backend) para prellenar ya.
+function rememberTel(correo, nombre, tel) {
+  const t = normTel(tel); if (!t) return;
+  if (!state.telefonos) state.telefonos = {};
+  const e = (correo || '').trim().toLowerCase();
+  if (e && e.indexOf('@') > 0) state.telefonos['email:' + e] = t;
+  const n = norm(nombre || '');
+  if (n) state.telefonos['name:' + n] = t;
+}
 const isInactivo = name => (state.inactivos || []).includes(norm(name));
 // Torneros activos (para asignar).
 const tornerosActivos = () => personalTorneros().filter(t => !isInactivo(t.name));
@@ -733,6 +762,7 @@ function applyData(data) {
   if (data.herramientas && data.herramientas.length) state.herramientas = data.herramientas;
   if (data.inactivos) state.inactivos = data.inactivos;
   if (data.asignaciones) state.asignaciones = data.asignaciones;
+  if (data.telefonos) state.telefonos = data.telefonos;
   if (data.costsByMonth && data.costsByMonth.length) { state.costs = data.costsByMonth; state.costsIsLive = true; }
   REPORTED = new Set(state.reports.map(r => otCode(r.cons)).filter(Boolean));
 
@@ -1647,6 +1677,7 @@ function requestModal() {
     <form id="request-form" class="form" novalidate>
       <div class="form-grid">
         <div class="field"><label for="req-email">Correo del solicitante</label><input required id="req-email" name="email" type="email" value="${esc(state.user.email)}"><span class="error-msg" data-error-for="email"></span></div>
+        <div class="field"><label for="req-phone">WhatsApp del solicitante</label><input required id="req-phone" name="phone" type="tel" inputmode="tel" value="${esc(telDe(state.user.email, state.user.name))}" placeholder="Celular, ej. 320 1234567"><span class="error-msg" data-error-for="phone"></span></div>
         <div class="field"><label for="req-name">Nombre del solicitante</label><input required id="req-name" name="requester" value="${esc(state.user.name)}"><span class="error-msg" data-error-for="requester"></span></div>
         <div class="field"><label for="req-cost">Centro de costos</label><input required id="req-cost" name="costCenter" list="cc-list" placeholder="Escribe el código o el área…" autocomplete="off"><datalist id="cc-list">${centroOptions()}</datalist><span class="error-msg" data-error-for="costCenter"></span></div>
         <div class="field"><label for="req-type">Tipo de OT</label><select id="req-type" name="type"><option>Desarrollo especial</option><option>Salida a campo</option><option>Reabastecimiento de inventario</option><option>Cubrimientos</option></select></div>
@@ -1733,8 +1764,9 @@ async function submitRequest(e) {
           formType: 'crear-solicitud',
           correo: local.correo, nombre: local.sol, cc: local.cc, tipo: local.tipo,
           herr: local.herr, cod: local.cod, trab: local.trab, ind: local.ind,
-          entrega: local.entrega, partes
+          entrega: local.entrega, partes, telefono: payload.phone || ''
         });
+        rememberTel(local.correo, local.sol, payload.phone);
         local.uuid = r.uuid || '';
         state.solicitudes.unshift(local);
         closeModal();
@@ -1767,6 +1799,7 @@ function reportFormFields(d = {}) {
         <div class="field"><label for="rep-date">Fecha de trabajo</label><input required id="rep-date" name="date" type="date" value="${esc(d.date || today())}"></div>
         <div class="field"><label for="rep-op">Operador</label><input required id="rep-op" name="operator" value="${esc(d.operator != null ? d.operator : state.user.name)}"></div>
         <div class="field"><label for="rep-email">Correo del operador</label><input required id="rep-email" name="email" type="email" value="${esc(d.email != null ? d.email : (operatorEmail(d.operator != null ? d.operator : state.user.name) || state.user.email || ''))}" placeholder="Para avisarte de la aprobación"><span class="error-msg" data-error-for="email"></span></div>
+        <div class="field"><label for="rep-phone">WhatsApp del operador</label><input required id="rep-phone" name="phone" type="tel" inputmode="tel" value="${esc(d.phone != null ? d.phone : telDe((d.email != null ? d.email : operatorEmail(d.operator != null ? d.operator : state.user.name)), (d.operator != null ? d.operator : state.user.name)))}" placeholder="Celular, ej. 320 1234567"><span class="error-msg" data-error-for="phone"></span></div>
         <div class="field full"><label for="rep-desc">Descripción del trabajo</label><textarea required id="rep-desc" name="description" placeholder="Trabajo realizado, verificaciones y novedades.">${esc(d.description || '')}</textarea></div>
         <div class="section-label">Parte y material</div>
         <div class="field"><label for="rep-part">Parte / componente</label><input id="rep-part" name="part" value="${esc(d.part || '')}" placeholder="Qué se maquinó"></div>
@@ -1841,10 +1874,11 @@ async function submitReport(e, editUuid) {
           cons: consFull, consFull, fecha: local.fecha, operador: local.op, correo: p.email || '',
           descripcion: local.desc, parte: p.part || '', diam: p.diam || '', long: p.length || '',
           torno: p.lathe || '', desbaste: p.roughing || '', fresa: p.mill || '', fresado: p.milling || '',
-          material: p.material || '', heat: p.heat || ''
+          material: p.material || '', heat: p.heat || '', telefono: p.phone || ''
         };
         if (editUuid) body.uuid = editUuid;
         const r = await postConfig(body);
+        rememberTel(p.email || '', local.op, p.phone);
         local.uuid = r.uuid || editUuid || '';
         if (editUuid) { const i = state.reports.findIndex(x => x.uuid === editUuid); if (i >= 0) state.reports[i] = local; else state.reports.unshift(local); }
         else state.reports.unshift(local);
