@@ -620,21 +620,20 @@ const state = {
 // Consecutivos que ya tienen al menos un reporte
 let REPORTED = new Set();
 
-// Enlace directo desde el correo: {accept:uuid} o {report:uuid}. Se resuelve al cargar los datos.
-let deepLink = null, deepLinkTries = 0;
+// Enlace directo desde el correo/WhatsApp: {accept:uuid}, {report:uuid} o {ot:cons}.
+// Se resuelve cuando el feed en vivo trae la orden (lo reintenta un driver en initDeepLink).
+let deepLink = null;
 function handleDeepLink() {
   if (!deepLink) return;
-  if (deepLink.accept) {
-    const idx = state.solicitudes.findIndex(s => s.uuid === deepLink.accept);
-    if (idx >= 0) { deepLink = null; openAcceptSolicitud(idx); return; }
-  } else if (deepLink.report) {
-    const idx = state.reports.findIndex(r => r.uuid === deepLink.report);
-    if (idx >= 0) { deepLink = null; openReport(idx); return; }
-  }
-  // No encontrado aún. Si ya hay datos en vivo, tras un par de intentos avisamos.
-  if (state.solicitudes.length || state.reports.length) {
-    if (++deepLinkTries >= 2) { deepLink = null; toast('No se encontró esa orden (quizá ya fue procesada).', 'error'); }
-  }
+  let idx = -1;
+  if (deepLink.accept)      idx = state.solicitudes.findIndex(s => s.uuid === deepLink.accept);
+  else if (deepLink.report) idx = state.reports.findIndex(r => r.uuid === deepLink.report);
+  else if (deepLink.ot)     idx = state.ot.findIndex(o => otCode(o.cons) === otCode(deepLink.ot));
+  if (idx < 0) return;                         // aún no está en los datos; el driver reintenta
+  const dl = deepLink; deepLink = null;
+  if (dl.accept)      openAcceptSolicitud(idx);
+  else if (dl.report) openReport(idx);
+  else                openOrder(idx, 'ot');
 }
 
 // Materiales soportados por la matriz de costos (hoja MATERIAL del BALANCE — nombres EXACTOS).
@@ -2473,13 +2472,27 @@ if (token && !DEMO) {
   const q = new URLSearchParams(location.search);
   const accept = q.get('accept');
   const report = q.get('report');
-  if (!accept && !report) return;
-  deepLink = accept ? { accept } : { report };
+  const ot     = q.get('ot');
+  if (!accept && !report && !ot) return;
+  deepLink = accept ? { accept } : report ? { report } : { ot };
   // Limpia la URL para que no quede el UUID visible ni se reactive al recargar.
   try { history.replaceState(null, '', location.pathname); } catch (_) {}
   // Auto-ingreso como líder de maquinado.
   state.user = { name: 'Carlos Hernández', role: 'Administrador' };
   start();
+  // Driver de reintento: el feed en vivo puede tardar (arranque en frío / celular).
+  // Reintenta abrir la orden y fuerza el refresco hasta encontrarla (o se rinde a los ~26s).
+  let dlTries = 0;
+  const dlTimer = setInterval(() => {
+    dlTries++;
+    handleDeepLink();
+    if (!deepLink) { clearInterval(dlTimer); return; }       // resuelto
+    if (dlTries === 1 || dlTries % 3 === 0) { try { refreshLive(false); } catch (_) {} }
+    if (dlTries >= 13) {
+      clearInterval(dlTimer);
+      if (deepLink) { deepLink = null; toast('No se encontró esa orden (quizá ya fue procesada o aún está sincronizando). Usa «Actualizar».', 'error'); }
+    }
+  }, 2000);
 })();
 </script>
 </body>
