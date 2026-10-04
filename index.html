@@ -2179,11 +2179,14 @@ function openAcceptSolicitud(idx) {
       <p class="muted" style="margin:0 0 4px">Como líder de maquinado, elige cómo generar el consecutivo. Esto crea la OT en tu sistema.</p>
     </div>`,
     `<button class="secondary" data-close>Cancelar</button>
+     <button class="secondary" data-reject-sol style="color:var(--red,#c23b3b);border-color:var(--red,#c23b3b)">Rechazar</button>
      <button class="secondary" data-accept-prefix="RE">Reparo (RE)</button>
      <button class="primary" data-accept-prefix="NP">No programada (NP)</button>
      <button class="primary" data-accept-prefix="PR" style="background:var(--green);color:#fff">Programada (PR)</button>`);
   $$('#modal-root [data-accept-prefix]').forEach(b =>
     b.addEventListener('click', () => acceptSolicitud(idx, b.dataset.acceptPrefix)));
+  const rejBtn = $('#modal-root [data-reject-sol]');
+  if (rejBtn) rejBtn.addEventListener('click', () => rejectSolicitud(idx));
   // Poblar los torneros si la config no estaba cargada.
   if (!state.configVars) fetchConfig().then(() => { const box = $('#accept-tornero-box'); if (box) box.innerHTML = tornerosCheckboxes(); }).catch(() => {});
 }
@@ -2206,6 +2209,38 @@ async function acceptSolicitud(idx, prefijo) {
       toast(`Solicitud aceptada como ${prog}. Consecutivo ${r.consecutivo || ''} generado.`);
       setTimeout(() => refreshLive(false), 2500);
     } catch (e) { toast('No se pudo aceptar: ' + e.message, 'error'); }
+  });
+}
+
+// Rechazar una solicitud (líder): la marca Rechazada y notifica al solicitante (correo + WhatsApp).
+function rejectSolicitud(idx) {
+  const s = state.solicitudes[idx];
+  if (!s) return;
+  if (!liveUrl()) { toast('Sin conexión en vivo.', 'error'); return; }
+  if (!s.uuid) { toast('Esta solicitud no tiene UUID; usa «Actualizar».', 'error'); return; }
+  modal(`Rechazar solicitud · ${esc(s.herr || '')}`, `
+    <form id="rejectsol-form" class="form" novalidate>
+      <p class="muted" style="margin:0 0 8px">La solicitud quedará como <b>Rechazada</b> y se avisará al solicitante.</p>
+      <div class="field full"><label for="rejs-motivo">Motivo del rechazo</label>
+        <textarea required id="rejs-motivo" name="motivo" placeholder="Explica por qué se rechaza la solicitud."></textarea>
+        <span class="error-msg" data-error-for="motivo"></span></div>
+    </form>`,
+    `<button class="secondary" data-close>Cancelar</button>
+     <button class="primary" data-submit form="rejectsol-form" style="background:var(--red,#c23b3b)"><span class="btn-label">Rechazar solicitud</span></button>`);
+  $('#rejectsol-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    if (!validateForm(e.target)) return toast('Escribe el motivo.', 'error');
+    const motivo = $('#rejs-motivo').value.trim();
+    const btn = document.querySelector('#modal-root [data-submit]');
+    await withLoading(btn, 'Rechazando…', async () => {
+      try {
+        await postConfig({ formType: 'rechazar-solicitud', uuid: s.uuid, motivo });
+        s.estado = 'Rechazada';
+        closeModal(); renderApprovals(); render();
+        toast('Solicitud rechazada. Se notificó al solicitante.');
+        setTimeout(() => refreshLive(false), 2500);
+      } catch (e2) { toast('No se pudo rechazar: ' + e2.message, 'error'); }
+    });
   });
 }
 
