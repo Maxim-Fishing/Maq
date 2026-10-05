@@ -272,17 +272,12 @@
     .form-foot{padding:14px 18px}
     .repeat-row{grid-template-columns:70px 1fr auto}
 
-    /* Logo compacto y nav que SÍ muestra el panel activo (píldora naranja con su nombre). */
-    .brand-chip .brand-logo{width:74px}
-    .nav{gap:5px}
-    .nav button{padding:11px}
-    .nav button:not(.active) .nav-label{display:none}
-    .nav button.active{background:var(--orange);color:#fff;box-shadow:none;padding:9px 13px}
-    .nav button.active:hover{background:var(--orange)}
-    .nav button.active .nav-label{display:inline;font-size:13px;font-weight:700;white-space:nowrap}
+    /* Nota: en ≤720px la navegación la reemplaza por completo el bloque "movil-v2"
+       (barra inferior de pestañas) que va antes de </body>. */
+    .nav button .nav-label{display:none}
+    .nav button{padding:12px}
     .nav .icon{width:20px;height:20px}
     .logout .nav-label{display:none}
-    .topbar h1{font-size:17px;font-weight:800}
   }
 
   @media(prefers-reduced-motion:reduce){
@@ -2505,5 +2500,188 @@ if (token && !DEMO) {
   }, 2000);
 })();
 </script>
+<!-- =====================================================================
+     MAXIM · Control de Maquinado — Versión móvil v2
+     Barra inferior de pestañas + menú «Más». Solo afecta ≤720px.
+     ===================================================================== -->
+<style id="movil-v2">
+@media (max-width:720px){
+  /* ---------- Estructura ---------- */
+  .app{display:block}
+  .main{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
+  .content{padding:14px 14px 24px}
+
+  /* ---------- Encabezado compacto (56 px) ---------- */
+  .topbar{position:sticky;top:0;z-index:14;height:56px;padding:0 8px 0 96px;gap:6px;background:var(--ink);border-bottom:0;color:#fff}
+  .topbar h1{color:#fff;font-size:15px;font-weight:700;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .topbar-right{gap:4px;flex-shrink:0}
+  #refresh-btn{width:44px;height:44px;padding:0;border:0;background:transparent;color:#fff;display:grid;place-items:center}
+  .user .avatar{background:var(--orange);color:var(--ink)}
+
+  /* Logo pequeño dentro del encabezado */
+  .side .brand{position:fixed;top:0;left:0;height:56px;padding:0 0 0 12px;display:flex;align-items:center}
+  .brand-chip{padding:3px 7px;border-radius:8px;box-shadow:none}
+  .side .brand-chip .brand-logo{width:62px;height:30px}
+
+  /* ---------- Barra lateral → barra inferior ---------- */
+  .side{position:fixed;left:0;right:0;bottom:0;top:auto;z-index:15;display:block;height:auto;padding:0 4px env(safe-area-inset-bottom);overflow:visible;background:#fff;color:var(--ink);border-top:1px solid var(--line);box-shadow:0 -4px 16px rgba(14,18,25,.06)}
+  .nav{display:flex;margin:0;gap:0;height:64px;overflow:visible}
+  .nav button{flex:1 1 0;min-width:0;flex-direction:column;justify-content:center;gap:3px;padding:6px 2px;border-radius:0;background:transparent!important;box-shadow:none!important;color:var(--muted);font-size:11px;font-weight:600;white-space:nowrap}
+  .nav button .icon{width:52px;height:30px;padding:5px 15px;border-radius:15px;box-sizing:border-box}
+  .nav button .nav-label{display:none}
+  .nav button .m-short{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;font-size:11px}
+  .nav button.active{color:var(--ink);font-weight:700}
+  .nav button.active .icon{background:#ffe2cc;color:#b84d00}
+  .nav button.m-overflow{display:none}
+  .logout{display:none}
+
+  /* ---------- Encabezado de cada vista ---------- */
+  .view-head{margin-bottom:14px}
+  .view-head h2{font-size:20px;font-weight:800}
+  #dashboard .actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  #dashboard .actions button{min-height:46px;border-radius:10px;font-size:14px;font-weight:700;padding:0 8px}
+  /* Botón principal de cada vista → botón flotante */
+  .view-head > button.primary{position:fixed;right:16px;bottom:calc(80px + env(safe-area-inset-bottom));z-index:13;height:52px;padding:0 18px;border-radius:16px;font-weight:800;box-shadow:0 8px 20px rgba(14,18,25,.22)}
+  .content .view.active{padding-bottom:64px}
+
+  /* ---------- Indicadores 2×2 compactos ---------- */
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:14px}
+  .stat{padding:11px 12px;min-width:0}
+  .stat b{display:block;font-size:10.5px;letter-spacing:.04em;color:#b84d00;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stat strong{font-size:22px;margin-top:2px}
+  .stat span{display:block;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  /* ---------- Filtros ---------- */
+  .filters{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+  .filters input{grid-column:1/-1}
+  .filters input,.filters select{width:100%;min-width:0;min-height:44px;font-size:16px;border-radius:10px}
+  .seg{display:grid;grid-template-columns:1fr 1fr;width:100%;box-sizing:border-box}
+  .seg-btn{min-height:40px;padding:8px 6px}
+
+  /* ---------- Tarjetas y listas ---------- */
+  .card{border-radius:12px}
+  .card:has(> .table-wrap){background:transparent;border:0;overflow:visible}
+  .card:has(> .table-wrap) > .card-title{padding:4px 2px 10px;border-bottom:0}
+  .table-wrap tr{padding:10px 12px;margin-bottom:10px;border-radius:12px}
+  .table-wrap td{padding:5px 0}
+  .table-wrap td:not(:last-child){border-bottom:0}
+  .table-wrap td:first-child{justify-content:flex-start;font-weight:700;font-size:14.5px}
+  .table-wrap td:first-child::before{display:none}
+  .table-wrap td .primary,.table-wrap td .secondary{min-height:40px;padding:8px 14px;border-radius:9px}
+  .grid{gap:14px}
+
+  /* ---------- Avisos y menú «Más» ---------- */
+  .toast{left:14px;right:14px;bottom:calc(84px + env(safe-area-inset-bottom))}
+  .m-sheet{position:fixed;inset:0;z-index:25}
+  .m-scrim{position:absolute;inset:0;background:rgba(17,19,24,.55);opacity:0;transition:opacity .2s ease}
+  .m-panel{position:absolute;left:0;right:0;bottom:0;background:#fff;border-radius:20px 20px 0 0;padding:8px 16px calc(20px + env(safe-area-inset-bottom));transform:translateY(100%);transition:transform .2s ease;box-shadow:0 -10px 30px rgba(14,18,25,.18)}
+  .m-sheet.open .m-scrim{opacity:1}
+  .m-sheet.open .m-panel{transform:none}
+  .m-handle{width:40px;height:5px;border-radius:3px;background:#d5d9e0;margin:0 auto 12px}
+  .m-item{width:100%;min-height:54px;display:flex;align-items:center;gap:14px;padding:0 8px;border:0;border-radius:10px;background:transparent;color:var(--ink);font:600 15px Inter,Segoe UI,Arial,sans-serif;text-align:left;cursor:pointer}
+  .m-item .icon{width:36px;height:36px;padding:8px;box-sizing:border-box;border-radius:10px;background:#f2f3f6;color:#3b414c;flex-shrink:0}
+  .m-item .m-short{display:none}
+  .m-item.active{background:#fff3e8}
+  .m-item.m-logout{margin-top:6px;border:1px solid #f3c7c2;justify-content:center;color:var(--red);min-height:48px}
+  .m-item.m-logout .icon{display:none}
+}
+@media (min-width:721px){ .nav .m-more,.m-sheet,.nav .m-short{display:none!important} }
+@media (max-width:720px) and (prefers-reduced-motion:reduce){ .m-scrim,.m-panel{transition:none} }
+</style>
+<script id="movil-v2-js">
+(function () {
+  var mq = window.matchMedia('(max-width:720px)');
+  var nav = document.querySelector('.side .nav');
+  if (!nav) return;
+  var MAX = 4; // accesos visibles en la barra inferior (además de «Más»)
+  // Prioridad para elegir qué va en la barra; el resto pasa a «Más»
+  var PRIORIDAD = ['dashboard', 'orders', 'approvals', 'reports', 'pending', 'requests', 'costs', 'users'];
+  var SHORT = { dashboard: 'Inicio', costs: 'Costos', orders: 'Órdenes', requests: 'Solicitudes',
+                approvals: 'Aprobar', reports: 'Reportes', pending: 'Pendientes', users: 'Ajustes' };
+
+  // Etiquetas cortas para la barra inferior
+  nav.querySelectorAll('button[data-view]').forEach(function (b) {
+    var s = document.createElement('span');
+    s.className = 'm-short';
+    s.textContent = SHORT[b.dataset.view] || b.textContent.trim();
+    b.appendChild(s);
+  });
+
+  // Botón «Más»
+  var more = document.createElement('button');
+  more.type = 'button';
+  more.className = 'm-more';
+  more.setAttribute('aria-haspopup', 'dialog');
+  more.innerHTML = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg><span class="m-short">Más</span>';
+  nav.appendChild(more);
+
+  // Panel inferior
+  var sheet = document.createElement('div');
+  sheet.className = 'm-sheet hidden';
+  sheet.innerHTML = '<div class="m-scrim" data-m-close></div><div class="m-panel" role="dialog" aria-modal="true" aria-label="Más opciones"><div class="m-handle"></div><div class="m-list"></div></div>';
+  document.body.appendChild(sheet);
+  var list = sheet.querySelector('.m-list');
+
+  function visibles() {
+    return Array.prototype.filter.call(nav.querySelectorAll('button[data-view]'), function (b) {
+      return !b.classList.contains('hidden');
+    });
+  }
+
+  var obs = new MutationObserver(layout);
+  function layout() {
+    obs.disconnect();
+    var btns = visibles();
+    var top = btns.slice().sort(function (a, b) {
+      return PRIORIDAD.indexOf(a.dataset.view) - PRIORIDAD.indexOf(b.dataset.view);
+    }).slice(0, MAX);
+    btns.forEach(function (b) { b.classList.toggle('m-overflow', mq.matches && top.indexOf(b) < 0); });
+    var activeHidden = btns.some(function (b) { return b.classList.contains('m-overflow') && b.classList.contains('active'); });
+    more.classList.toggle('active', activeHidden);
+    obs.observe(nav, { subtree: true, attributes: true, attributeFilter: ['class'] });
+  }
+
+  function openSheet() {
+    list.innerHTML = '';
+    visibles().filter(function (b) { return b.classList.contains('m-overflow'); }).forEach(function (b) {
+      var it = document.createElement('button');
+      it.type = 'button';
+      it.className = 'm-item' + (b.classList.contains('active') ? ' active' : '');
+      it.dataset.view = b.dataset.view; // la delegación global del app ejecuta show()
+      it.innerHTML = b.innerHTML;
+      list.appendChild(it);
+    });
+    var lo = document.getElementById('logout');
+    if (lo) {
+      var out = document.createElement('button');
+      out.type = 'button';
+      out.className = 'm-item m-logout';
+      out.innerHTML = lo.innerHTML;
+      out.addEventListener('click', function () { closeSheet(); lo.click(); });
+      list.appendChild(out);
+    }
+    sheet.classList.remove('hidden');
+    requestAnimationFrame(function () { sheet.classList.add('open'); });
+    var first = list.querySelector('.m-item');
+    if (first) first.focus();
+  }
+  function closeSheet() {
+    sheet.classList.remove('open');
+    setTimeout(function () { sheet.classList.add('hidden'); }, 200);
+    more.focus();
+  }
+
+  more.addEventListener('click', openSheet);
+  sheet.addEventListener('click', function (e) {
+    if (e.target.closest('[data-m-close]') || e.target.closest('.m-item[data-view]')) closeSheet();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !sheet.classList.contains('hidden')) closeSheet();
+  });
+  if (mq.addEventListener) mq.addEventListener('change', layout); else mq.addListener(layout);
+  layout();
+})();
+</script>
+<!-- ======================= fin versión móvil v2 ======================= -->
 </body>
 </html>
