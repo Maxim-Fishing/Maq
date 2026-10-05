@@ -213,8 +213,11 @@
   @media(max-width:980px){
     .app{grid-template-columns:1fr}
     .side{height:auto;position:static;flex-direction:row;padding:12px;align-items:center;gap:12px;overflow:auto}
+    .side{padding:9px 12px}
     .side .brand{padding:0}
     .side .brand span:last-child{display:none}
+    .brand-chip{padding:5px 8px;flex-shrink:0}
+    .brand-chip .brand-logo{width:96px}
     .nav{display:flex;overflow:auto;margin-left:auto;gap:4px}
     .nav button{white-space:nowrap;padding:10px 12px}
     .logout{margin:0;border:0;padding:10px 12px;white-space:nowrap}
@@ -269,10 +272,17 @@
     .form-foot{padding:14px 18px}
     .repeat-row{grid-template-columns:70px 1fr auto}
 
-    .nav button .nav-label{display:none}
-    .nav button{padding:12px}
+    /* Logo compacto y nav que SÍ muestra el panel activo (píldora naranja con su nombre). */
+    .brand-chip .brand-logo{width:74px}
+    .nav{gap:5px}
+    .nav button{padding:11px}
+    .nav button:not(.active) .nav-label{display:none}
+    .nav button.active{background:var(--orange);color:#fff;box-shadow:none;padding:9px 13px}
+    .nav button.active:hover{background:var(--orange)}
+    .nav button.active .nav-label{display:inline;font-size:13px;font-weight:700;white-space:nowrap}
     .nav .icon{width:20px;height:20px}
     .logout .nav-label{display:none}
+    .topbar h1{font-size:17px;font-weight:800}
   }
 
   @media(prefers-reduced-motion:reduce){
