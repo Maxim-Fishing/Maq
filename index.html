@@ -691,6 +691,34 @@ function personalTorneros() {
   });
   return out;
 }
+// Unifica variantes de un nombre de operador al tornero oficial (de PERSONAL), comparando tokens
+// (nombre/apellidos) con tolerancia de prefijo. Si no coincide con ninguno, deja el nombre tal cual.
+// Resuelve los duplicados tipo "Ricardo Montero Parraga" / "Ricardo Montero parraga" / "Ricardo Mauricio Montero".
+function canonicalOp(name) {
+  const torneros = personalTorneros().map(t => t.name);
+  const tok = s => norm(s).split(' ').filter(w => w.length >= 3);
+  const nt = tok(name);
+  if (nt.length) {
+    let best = null, bestScore = 0;
+    torneros.forEach(cn => {
+      const ct = tok(cn); let sc = 0;
+      nt.forEach(w => { if (ct.some(cw => cw === w || cw.startsWith(w) || w.startsWith(cw))) sc++; });
+      if (sc > bestScore) { bestScore = sc; best = cn; }
+    });
+    if (bestScore >= 2) return best;   // ≥2 tokens en común (nombre + apellido) = mismo tornero
+  }
+  return name;
+}
+// (Re)construye el selector "Todos los operadores" con nombres unificados y sin duplicados.
+function rebuildReportOpFilter() {
+  const repOp = $('#report-op'); if (!repOp) return;
+  const cur = repOp.value;
+  const map = new Map();
+  (state.reports || []).forEach(r => { if (!r.op) return; const c = canonicalOp(r.op); const k = norm(c); if (!map.has(k)) map.set(k, c); });
+  const ops = [...map.values()].sort((a, b) => norm(a).localeCompare(norm(b)));
+  repOp.innerHTML = '<option value="">Todos los operadores</option>' + ops.map(o => `<option>${esc(o)}</option>`).join('');
+  repOp.value = ops.some(o => norm(o) === norm(cur)) ? cur : '';
+}
 // Correo predeterminado de un tornero (desde PERSONAL); '' si no está.
 function operatorEmail(name) {
   const t = personalTorneros().find(x => norm(x.name) === norm(name));
@@ -781,13 +809,7 @@ function applyData(data) {
   // Si el modal de reporte está abierto, refresca la lista de consecutivos (OT abiertas) en vivo.
   const consList = $('#cons-list');
   if (consList) consList.innerHTML = reportConsOptions();
-  const repOp = $('#report-op');
-  if (repOp) {
-    const cur = repOp.value;
-    const ops = [...new Set(state.reports.map(r => r.op).filter(Boolean))].sort();
-    repOp.innerHTML = '<option value="">Todos los operadores</option>' + ops.map(o => `<option>${esc(o)}</option>`).join('');
-    repOp.value = cur;
-  }
+  rebuildReportOpFilter();
   if (!$('#app').classList.contains('hidden')) render();
   handleDeepLink();
 }
@@ -861,7 +883,7 @@ async function fetchConfig(force) {
     const sep = url.includes('?') ? '&' : '?';
     const res = await fetch(url + sep + 'action=config', { method:'GET' });
     const data = await res.json();
-    if (data && data.config) { state.configVars = data.config; configLoaded = true; }
+    if (data && data.config) { state.configVars = data.config; configLoaded = true; rebuildReportOpFilter(); }
   } catch (e) { if (host) host.innerHTML = '<p class="notice error">No se pudieron leer las variables: ' + esc(e.message) + '</p>'; }
   finally { configLoading = false; renderConfigVars(); }
 }
@@ -1554,7 +1576,7 @@ function renderReports() {
   const mine = state.user.role === 'Operador';
   const base = mine ? state.reports.filter(r => isMe(r.op)) : state.reports;
   const rows = base
-    .filter(r => !fo || r.op === fo)
+    .filter(r => !fo || norm(canonicalOp(r.op)) === norm(fo))
     .filter(r => !fe || r.estado === fe)
     .filter(r => `${r.cons} ${r.op} ${r.desc}`.toLowerCase().includes(q));
 
