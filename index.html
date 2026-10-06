@@ -76,6 +76,7 @@
   .live-updated{font-size:12px;color:var(--muted);white-space:nowrap}
   #refresh-btn{padding:8px 12px}
   .content{padding:28px 32px;max-width:1500px;margin:auto}
+  .global-fab{display:none}  /* solo se muestra en móvil para Tornero/Solicitante (ver bloque movil-v2) */
   .view{display:none;animation:fadeIn var(--t-med) both}
   .view.active{display:block}
   @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
@@ -544,6 +545,12 @@
         </section>
       </div>
     </main>
+    <!-- Acción principal como botón flotante GLOBAL (fuera de .view, para que position:fixed ancle a la pantalla).
+         El texto y la acción se fijan según el rol en start(); solo se ve en móvil para Tornero/Solicitante. -->
+    <button id="global-fab" class="global-fab" type="button" aria-label="Acción principal">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      <span id="global-fab-label">Nuevo</span>
+    </button>
   </section>
 
   <div id="modal-root" class="hidden"></div>
@@ -2307,7 +2314,10 @@ function fillNameOptions() {
   const role = $('#free-role').value;
   let list;
   if (role === 'Operador') {
-    list = (state.operators || []).filter(n => !isInactivo(n));
+    // Excluidos del inicio de sesión de torneros (no afecta sus datos/reportes existentes).
+    // "Ana" = Ana Lizeth Ramírez Garzón → se excluye por prefijo "ANA ".
+    const esExcluido = n => { const k = norm(n); return k === 'ANA' || k.indexOf('ANA ') === 0; };
+    list = (state.operators || []).filter(n => !isInactivo(n) && !esExcluido(n));
   } else {
     // Solicitantes: lista completa embebida + los que aparezcan en los datos, sin duplicados
     const set = new Map();
@@ -2372,6 +2382,13 @@ function start() {
     $('#user-name').textContent = state.user.name;
     $('#avatar').textContent = (state.user.name || 'M').slice(0,1).toUpperCase();
     $('#user-role').textContent = role;
+    app.dataset.role = role;   // controla el FAB global y la navegación móvil por rol
+
+    // Botón flotante de acción principal: Tornero → Nuevo registro, Solicitante → Nueva solicitud.
+    const fab = $('#global-fab'), fabLbl = $('#global-fab-label');
+    if (role === 'Operador')         { fab.dataset.open = 'report';  fabLbl.textContent = 'Nuevo registro'; }
+    else if (role === 'Solicitante') { fab.dataset.open = 'request'; fabLbl.textContent = 'Nueva solicitud'; }
+    else { fab.removeAttribute('data-open'); }
 
     // Navegación visible según rol
     const visible = NAV_BY_ROLE[role] || ['orders'];
@@ -2540,9 +2557,16 @@ if (token && !DEMO) {
   .view-head h2{font-size:20px;font-weight:800}
   #dashboard .actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   #dashboard .actions button{min-height:46px;border-radius:10px;font-size:14px;font-weight:700;padding:0 8px}
-  /* Botón principal de cada vista → botón flotante */
-  .view-head > button.primary{position:fixed;right:16px;bottom:calc(80px + env(safe-area-inset-bottom));z-index:13;height:52px;padding:0 18px;border-radius:16px;font-weight:800;box-shadow:0 8px 20px rgba(14,18,25,.22)}
-  .content .view.active{padding-bottom:64px}
+  /* Acción principal = FAB GLOBAL (está fuera de las vistas, así position:fixed ancla a la pantalla
+     y queda SIEMPRE en la esquina inferior, durante todo el scroll). Reemplaza el botón inline. */
+  .app[data-role="Operador"] #global-fab,
+  .app[data-role="Solicitante"] #global-fab{display:inline-flex;align-items:center;gap:8px;position:fixed;right:16px;bottom:calc(76px + env(safe-area-inset-bottom));z-index:16;height:52px;padding:0 20px;border:0;border-radius:999px;background:var(--orange);color:#fff;font-weight:800;font-size:15px;box-shadow:0 10px 24px rgba(255,107,0,.35);cursor:pointer;transition:transform .08s ease}
+  .app[data-role="Operador"] #global-fab:active,
+  .app[data-role="Solicitante"] #global-fab:active{transform:scale(.96)}
+  .app[data-role="Operador"] .view-head>button.primary,
+  .app[data-role="Solicitante"] .view-head>button.primary{display:none}
+  .app[data-role="Operador"] .content,
+  .app[data-role="Solicitante"] .content{padding-bottom:84px}
 
   /* ---------- Indicadores 2×2 compactos ---------- */
   .stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:14px}
