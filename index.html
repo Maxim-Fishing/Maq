@@ -310,6 +310,7 @@
           <label for="free-name">Tu nombre</label>
           <input id="free-name" list="free-name-list" autocomplete="off" placeholder="Escribe tu nombre y selecciónalo…" aria-label="Escribe y selecciona tu nombre">
           <datalist id="free-name-list"></datalist>
+          <select id="free-name-select" class="hidden" aria-label="Selecciona tu nombre"><option value="">Selecciona tu nombre…</option></select>
           <span class="error-msg" data-error-for="free-name"></span>
         </div>
         <button class="primary" style="margin-top:18px;width:100%" type="submit"><span class="btn-label">Ingresar</span></button>
@@ -2344,22 +2345,40 @@ function fillPending(cons) {
 /* ---------- Login ---------- */
 // Lista completa de solicitantes (embebida) para el autocompletar del ingreso libre.
 const SOLICITANTES = (() => { try { return JSON.parse(document.getElementById('maxim-solicitantes').textContent || '[]'); } catch (e) { return []; } })();
+// Nombres de torneros habilitados para iniciar sesión = operadores conocidos,
+// MENOS Ana y menos los inactivos, deduplicados. Lista cerrada (nadie fuera de aquí entra).
+function tornerosLogin() {
+  const esExcluido = n => { const k = norm(n); return k === 'ANA' || k.indexOf('ANA ') === 0; };
+  const seen = new Set(), out = [];
+  (state.operators || []).forEach(n => {
+    if (!n || isInactivo(n) || esExcluido(n)) return;
+    const k = norm(n); if (!seen.has(k)) { seen.add(k); out.push(n); }
+  });
+  return out.sort((a, b) => norm(a).localeCompare(norm(b)));
+}
 function fillNameOptions() {
   const role = $('#free-role').value;
-  let list;
+  const inp = $('#free-name'), sel = $('#free-name-select');
   if (role === 'Operador') {
-    // Excluidos del inicio de sesión de torneros (no afecta sus datos/reportes existentes).
-    // "Ana" = Ana Lizeth Ramírez Garzón → se excluye por prefijo "ANA ".
-    const esExcluido = n => { const k = norm(n); return k === 'ANA' || k.indexOf('ANA ') === 0; };
-    list = (state.operators || []).filter(n => !isInactivo(n) && !esExcluido(n));
+    // Torneros: SELECCIÓN CERRADA (sin texto libre) — solo nombres de la lista.
+    if (inp) inp.classList.add('hidden');
+    if (sel) {
+      sel.classList.remove('hidden');
+      const t = tornerosLogin();
+      sel.innerHTML = t.length
+        ? '<option value="">Selecciona tu nombre…</option>' + t.map(n => `<option>${esc(n)}</option>`).join('')
+        : '<option value="">Cargando torneros…</option>';
+    }
   } else {
-    // Solicitantes: lista completa embebida + los que aparezcan en los datos, sin duplicados
+    // Solicitantes: entrada libre con autocompletar (lista grande).
+    if (sel) sel.classList.add('hidden');
+    if (inp) inp.classList.remove('hidden');
     const set = new Map();
     [...SOLICITANTES, ...state.requesters].forEach(n => { const k = norm(n); if (n && !set.has(k)) set.set(k, n); });
-    list = [...set.values()].sort((a, b) => norm(a).localeCompare(norm(b)));
+    const list = [...set.values()].sort((a, b) => norm(a).localeCompare(norm(b)));
+    const el = $('#free-name-list');
+    if (el) el.innerHTML = list.map(n => `<option value="${esc(n)}"></option>`).join('');
   }
-  const el = $('#free-name-list');
-  if (el) el.innerHTML = list.map(n => `<option value="${esc(n)}"></option>`).join('');
 }
 $('.login-tabs').addEventListener('click', e => {
   const b = e.target.closest('.ltab'); if (!b) return;
@@ -2371,11 +2390,13 @@ fillNameOptions();
 
 $('#free-form').addEventListener('submit', e => {
   e.preventDefault();
-  const name = $('#free-name').value;
+  const role = $('#free-role').value;
+  // Torneros: solo del select cerrado. Solicitantes: del input libre.
+  const name = ((role === 'Operador' ? $('#free-name-select').value : $('#free-name').value) || '').trim();
   const err = $('[data-error-for="free-name"]');
-  if (!name) { err.textContent = 'Selecciona tu nombre.'; return; }
+  if (!name) { err.textContent = role === 'Operador' ? 'Selecciona tu nombre de la lista.' : 'Selecciona tu nombre.'; return; }
   err.textContent = '';
-  state.user = { name, role: $('#free-role').value };
+  state.user = { name, role };
   start();
 });
 
