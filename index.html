@@ -778,6 +778,9 @@ function applyData(data) {
   REPORTED = new Set(state.reports.map(r => otCode(r.cons)).filter(Boolean));
 
   if ($('#free-name')) fillNameOptions();
+  // Si el modal de reporte está abierto, refresca la lista de consecutivos (OT abiertas) en vivo.
+  const consList = $('#cons-list');
+  if (consList) consList.innerHTML = reportConsOptions();
   const repOp = $('#report-op');
   if (repOp) {
     const cur = repOp.value;
@@ -1798,10 +1801,19 @@ async function submitRequest(e) {
 }
 
 // Consecutivos ofrecidos al tornero: OT abiertas "CONS - HERRAMIENTA" + consecutivos ya reportados.
+// Consecutivos que puede elegir el tornero para registrar trabajo = las OT ABIERTAS
+// (pendientes), con el consecutivo más reciente arriba. Si no hay datos en vivo,
+// cae a los consecutivos ya reportados como respaldo.
 function reportConsOptions() {
-  const open = (state.ot || []).filter(o => (o.estado || '') === 'Abierta').map(o => o.herr ? `${o.cons} - ${o.herr}` : o.cons);
-  const rep = (state.reports || []).map(r => r.cons).filter(Boolean);
-  return [...new Set([...open, ...rep])].sort().map(c => `<option value="${esc(c)}">`).join('');
+  const numKey = c => { const m = String(c).match(/(\d+)/); return m ? parseInt(m[1], 10) : 0; };
+  const open = (state.ot || []).filter(o => (o.estado || '') === 'Abierta');
+  if (open.length) {
+    open.sort((a, b) => numKey(b.cons) - numKey(a.cons));   // descendente: lo más nuevo primero
+    return open.map(o => `<option value="${esc(o.herr ? `${o.cons} - ${o.herr}` : o.cons)}">`).join('');
+  }
+  // Respaldo (feed aún no cargó): consecutivos reportados, también del más nuevo al más viejo.
+  const rep = [...new Set((state.reports || []).map(r => r.cons).filter(Boolean))].sort((a, b) => numKey(b) - numKey(a));
+  return rep.map(c => `<option value="${esc(c)}">`).join('');
 }
 const laticSel = (opts, sel) => opts.map(t => `<option${norm(t) === norm(sel || '') ? ' selected' : ''}>${t}</option>`).join('');
 function reportFormFields(d = {}) {
