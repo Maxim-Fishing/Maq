@@ -543,6 +543,14 @@
               <div id="config-vars"><p class="muted">Cargando variables…</p></div>
             </div>
           </article>
+          <article class="card" style="margin-top:18px">
+            <div class="card-title">Materiales disponibles (lotes / Heat)</div>
+            <div class="card-body">
+              <p class="muted" style="margin:0 0 10px">Lotes de material con su Heat y OC (hoja HT Y CC). Los torneros eligen el Heat según el material y la medida al registrar. Agrega un lote cuando llega material nuevo y quítalo con la <b>✕</b> cuando se acabe.</p>
+              <button class="secondary" type="button" data-action="heat-add" style="margin-bottom:12px">＋ Agregar material</button>
+              <div id="heats-admin"><p class="muted">Cargando lotes…</p></div>
+            </div>
+          </article>
         </section>
       </div>
     </main>
@@ -623,6 +631,7 @@ const state = {
   requesters: [],
   centros: [],      // Centros de costo {codigo, desc} (HT Y CC)
   herramientas: [], // Lista maestra de herramientas (HT Y CC)
+  heats: [],        // Lotes de material {row, ref, od, heat, oc, estado} (HT Y CC)
   inactivos: [],    // Nombres (normalizados) de torneros desactivados
   asignaciones: {}, // { códigoOT: nombreTornero }
   requests: [],
@@ -658,7 +667,7 @@ function handleDeepLink() {
 }
 
 // Materiales soportados por la matriz de costos (hoja MATERIAL del BALANCE — nombres EXACTOS).
-const MATERIALS = ['4140', '4340', 'INOXIDABLE', 'ALUMINIO', 'BRONCE', 'TEFLON'];
+const MATERIALS = ['4140', '4340', 'INOXIDABLE', 'DURALUMINIO', 'BRONCE', 'TEFLON'];
 // Diámetros en mm de la matriz de costos (col B de MATERIAL).
 const DIAMETROS_MM = ['0.00','6.35','9.53','12.70','19.05','25.40','28.58','31.75','38.10','43.18','44.45','48.26','50.80','53.98','57.15','59.44','63.50','69.85','76.20','82.55','88.90','101.60','114.30','127.00','139.70','152.40','165.10','177.80','190.50','203.20','215.90','228.60','254.00','279.40','304.80','330.20','406.40'];
 // Tipos de trabajo (columna "tipo de trabajo" del form OT).
@@ -670,6 +679,28 @@ const materialOptions = (sel = '') =>
 const diametroOptions = (sel = '') =>
   `<option value="">— Selecciona —</option>` +
   DIAMETROS_MM.map(d => `<option value="${d}"${d === sel ? ' selected' : ''}>${d} mm</option>`).join('');
+// Medidas en pulgadas (OD de la hoja HT Y CC) para capturar lotes de material.
+const OD_PULGADAS = ['1/2"','5/8"','3/4"','1"','1 1/8"','1 1/4"','1 1/2"','1 3/4"','2"','2 1/4"','2 1/2"','2 3/4"','3"','3 1/2"','4"','4 1/2"','5"','6"','7"','8"','8 1/2"','9"','10"','12"','14"','16"','20"'];
+// Convierte una OD en pulgadas (texto "1 1/4\"", "1/2\"", "2\"") a decimal.
+function inchDec(s){
+  s = String(s == null ? '' : s).replace(/["″'']/g, '').trim();
+  if (!s) return NaN;
+  let m = s.match(/^(\d+)\s+(\d+)\/(\d+)$/); if (m) return (+m[1]) + (+m[2]) / (+m[3]);
+  m = s.match(/^(\d+)\/(\d+)$/); if (m) return (+m[1]) / (+m[2]);
+  const n = parseFloat(s.replace(',', '.')); return isNaN(n) ? NaN : n;
+}
+// Convierte un diámetro en mm a pulgadas (para casar con la OD de los lotes).
+function mmToInch(mm){ const n = parseFloat(String(mm).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? NaN : n / 25.4; }
+// Lotes de material (Heat) DISPONIBLES para un material + diámetro(mm) dado.
+function heatsFor(material, diamMm){
+  const inch = mmToInch(diamMm); if (isNaN(inch)) return [];
+  const mat = norm(material || ''); if (!mat) return [];
+  return (state.heats || []).filter(h =>
+    norm(h.estado || '') === 'DISPONIBLE' &&
+    norm(h.ref || '') === mat &&
+    Math.abs(inchDec(h.od) - inch) < 0.03
+  );
+}
 const workTypeOptions = (sel = '') =>
   `<option value="">— Selecciona —</option>` +
   WORK_TYPES.map(t => `<option value="${esc(t)}"${norm(t) === norm(sel) ? ' selected' : ''}>${esc(t)}</option>`).join('');
@@ -808,6 +839,7 @@ function applyData(data) {
   state.requesters  = data.requesters || [];
   if (data.centros && data.centros.length) state.centros = data.centros;
   if (data.herramientas && data.herramientas.length) state.herramientas = data.herramientas;
+  if (data.heats) state.heats = data.heats;
   if (data.inactivos) state.inactivos = data.inactivos;
   if (data.asignaciones) state.asignaciones = data.asignaciones;
   if (data.telefonos) state.telefonos = data.telefonos;
@@ -1322,7 +1354,7 @@ function costRates() {
     if (name.toUpperCase().indexOf('ARRIENDO') === 0) arriendo = hora;
   });
   // MATERIAL: readGrid devuelve header=fila1 (título); los tipos están en rows[0]=fila2
-  // (DIAM in, DIAM mm, 4140, 4340, INOX, ALUMINIO, BRONCE, TEFLON) y los datos en rows[1..].
+  // (DIAM in, DIAM mm, 4140, 4340, INOX, DURALUMINIO, BRONCE, TEFLON) y los datos en rows[1..].
   const matRows = (cfg.material && cfg.material.rows) || [];
   const tipos = (matRows[0] || []).slice(2).map(cv_);         // nombres de material
   const dnorm = s => { const n = parseFloat(String(s == null ? '' : s).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? '' : String(Math.round(n * 100) / 100); };
@@ -1674,6 +1706,7 @@ function renderApprovals() {
 
 function renderUsers() {
   const isAdmin = state.user.role === 'Administrador';
+  renderHeatsAdmin();
   if (!state.configVars) { $('#users-table').innerHTML = `<tr><td colspan="5"><span class="muted">Cargando torneros…</span></td></tr>`; return; }
   const tor = personalTorneros();
   $('#users-table').innerHTML = tor.length
@@ -1690,6 +1723,68 @@ function renderUsers() {
       </tr>`;
       }).join('')
     : `<tr><td colspan="5">${emptyState('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>','Sin torneros','Añade un tornero con su correo para comenzar.')}</td></tr>`;
+}
+// Lista de lotes de material DISPONIBLES en la hoja HT Y CC, con ✕ para quitarlos.
+function renderHeatsAdmin() {
+  const box = $('#heats-admin'); if (!box) return;
+  const isAdmin = state.user.role === 'Administrador';
+  const list = (state.heats || []).filter(h => h.heat && norm(h.estado || '') === 'DISPONIBLE');
+  if (!list.length) {
+    box.innerHTML = `<p class="muted">No hay lotes de material cargados. Usa “＋ Agregar material”.</p>`;
+    return;
+  }
+  const sorted = list.slice().sort((a, b) => norm(a.ref).localeCompare(norm(b.ref)) || (inchDec(a.od) - inchDec(b.od)));
+  box.innerHTML = `<div class="table-wrap"><table>
+      <thead><tr><th>Material</th><th>Medida (OD)</th><th>Heat</th><th>OC</th>${isAdmin ? '<th>Quitar</th>' : ''}</tr></thead>
+      <tbody>${sorted.map(h => `<tr>
+        <td data-label="Material"><b>${esc(h.ref)}</b></td>
+        <td data-label="Medida (OD)">${esc(h.od)}</td>
+        <td data-label="Heat">${esc(h.heat)}</td>
+        <td data-label="OC">${esc(h.oc || '—')}</td>
+        ${isAdmin ? `<td data-label="Quitar"><button class="secondary" style="color:var(--red,#c23b3b);padding:4px 11px;font-weight:700" title="Quitar (se acabó el material)" data-action="heat-del" data-row="${esc(String(h.row))}" data-heat="${esc(h.heat)}" data-label="${esc(h.ref + ' ' + h.od)}">✕</button></td>` : ''}
+      </tr>`).join('')}</tbody></table></div>`;
+}
+function heatAddModal() {
+  const matOpts = MATERIALS.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+  const odOpts = OD_PULGADAS.map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('');
+  modal('Agregar material (lote / Heat)', `
+    <form id="heat-form" class="form" novalidate>
+      <div class="form-grid">
+        <div class="field"><label for="ha-ref">Material</label><select id="ha-ref" name="ref" required><option value="">— Selecciona —</option>${matOpts}</select></div>
+        <div class="field"><label for="ha-od">Medida (OD en pulgadas)</label><select id="ha-od" name="od" required><option value="">— Selecciona —</option>${odOpts}</select></div>
+        <div class="field"><label for="ha-heat">Heat No.</label><input id="ha-heat" name="heat" required placeholder="Ej. BXD, 24809926"></div>
+        <div class="field"><label for="ha-oc">OC</label><input id="ha-oc" name="oc" placeholder="Ej. 20462 (opcional)"></div>
+      </div>
+      <p class="muted" style="margin:8px 0 0">Se agrega a la hoja HT Y CC como <b>DISPONIBLE</b> y queda listo para que los torneros lo elijan.</p>
+    </form>`,
+    `<button class="secondary" data-close>Cancelar</button>
+     <button class="primary" data-submit form="heat-form"><span class="btn-label">Guardar material</span></button>`);
+  $('#heat-form').addEventListener('submit', saveHeat);
+}
+async function saveHeat(e) {
+  e.preventDefault();
+  const b = Object.fromEntries(new FormData(e.target));
+  if (!b.ref || !b.od || !(b.heat || '').trim()) return toast('Material, medida y Heat son obligatorios.', 'error');
+  const btn = document.querySelector('#modal-root [data-submit]');
+  await withLoading(btn, 'Guardando…', async () => {
+    try {
+      await postConfig({ formType: 'heat-add', ref: b.ref, od: b.od, heat: (b.heat || '').trim(), oc: (b.oc || '').trim() });
+      closeModal();
+      toast('Material agregado.');
+      await refreshLive();
+      renderHeatsAdmin();
+    } catch (err) { toast('No se pudo agregar: ' + err.message, 'error'); }
+  });
+}
+function delHeat(row, heat, label) {
+  confirmDialog(`¿Quitar el lote ${label || ''} (Heat ${heat})? Dejará de aparecer para los torneros.`, async () => {
+    try {
+      await postConfig({ formType: 'heat-del', row: +row, heat: heat });
+      toast('Material quitado.');
+      await refreshLive();
+      renderHeatsAdmin();
+    } catch (err) { toast('No se pudo quitar: ' + err.message, 'error'); }
+  });
 }
 async function toggleOp(name, makeActive) {
   if (!liveUrl()) return toast('Sin conexión en vivo.', 'error');
@@ -1866,14 +1961,53 @@ function reportFormFields(d = {}) {
         <div class="field"><label for="rep-rough">Tiempo torno (horas)</label><input id="rep-rough" name="roughing" type="number" step="0.25" min="0" inputmode="decimal" value="${d.roughing != null ? esc(d.roughing) : '0'}"></div>
         <div class="field"><label for="rep-mill">Fresa</label><select id="rep-mill" name="mill"><option value="">No aplica</option>${laticSel(['FRESA 1','FRESA 2'], d.mill)}</select></div>
         <div class="field"><label for="rep-milling">Tiempo fresado (horas)</label><input id="rep-milling" name="milling" type="number" step="0.25" min="0" inputmode="decimal" value="${d.milling != null ? esc(d.milling) : '0'}"></div>
-        <div class="field"><label for="rep-heat">Heat No.</label><input id="rep-heat" name="heat" value="${esc(d.heat || '')}" placeholder="Opcional"></div>
+        <div class="field"><label for="rep-heat">Heat No. <span class="muted" style="font-weight:400">(según material y medida)</span></label><select id="rep-heat" name="heat"><option value="">— elige material y medida —</option></select></div>
+        <div class="field"><label for="rep-oc">OC <span class="muted" style="font-weight:400">(automático)</span></label><input id="rep-oc" name="oc" readonly tabindex="-1" value="${esc(d.oc || '')}" placeholder="—" style="background:#f3f4f6;color:#374151;cursor:not-allowed"></div>
       </div>`;
+}
+// Rellena las opciones de Heat según material + diámetro(mm) elegidos; autollena si hay uno solo.
+function updateReportHeat(preset){
+  const selMat = $('#rep-mat'), selDiam = $('#rep-diam'), heatSel = $('#rep-heat');
+  if (!heatSel) return;
+  const hasBoth = selMat && selMat.value && selDiam && selDiam.value;
+  const matches = hasBoth ? heatsFor(selMat.value, selDiam.value) : [];
+  let html;
+  if (!hasBoth) {
+    html = '<option value="">— elige material y medida —</option>';
+  } else if (matches.length === 0) {
+    html = '<option value="">— sin lote disponible —</option>';
+  } else if (matches.length === 1) {
+    html = `<option value="${esc(matches[0].heat)}" data-oc="${esc(matches[0].oc || '')}" selected>${esc(matches[0].heat)}</option>`;
+  } else {
+    html = '<option value="">— elige el lote —</option>' +
+      matches.map(h => `<option value="${esc(h.heat)}" data-oc="${esc(h.oc || '')}">${esc(h.heat)}</option>`).join('');
+  }
+  // Conserva un Heat previo (edición) que ya no esté en la lista de disponibles.
+  if (preset && !matches.some(h => norm(h.heat) === norm(preset))) {
+    html += `<option value="${esc(preset)}" selected>${esc(preset)} (registrado)</option>`;
+  }
+  heatSel.innerHTML = html;
+  syncReportOc();
+}
+// Copia la OC del lote seleccionado al recuadro informativo.
+function syncReportOc(){
+  const heatSel = $('#rep-heat'), ocBox = $('#rep-oc');
+  if (!heatSel || !ocBox) return;
+  const opt = heatSel.options[heatSel.selectedIndex];
+  ocBox.value = (opt && opt.getAttribute('data-oc')) || '';
+}
+// Conecta los selectores de material/diámetro/heat del modal de reporte.
+function wireReportHeat(preset){
+  ['#rep-mat', '#rep-diam'].forEach(id => { const el = $(id); if (el) el.addEventListener('change', () => updateReportHeat()); });
+  const hs = $('#rep-heat'); if (hs) hs.addEventListener('change', syncReportOc);
+  updateReportHeat(preset);
 }
 function reportModal() {
   modal('Registrar trabajo de maquinado', `<form id="report-form" class="form" novalidate>${reportFormFields()}</form>`,
     `<button class="secondary" data-close>Cancelar</button>
      <button class="primary" data-submit form="report-form"><span class="btn-label">Guardar reporte</span></button>`);
   $('#report-form').addEventListener('submit', submitReport);
+  wireReportHeat();
   // Prellenar el correo del tornero desde PERSONAL (si aún no había config cargada).
   if (!state.configVars) fetchConfig().then(() => {
     const el = $('#rep-email'); if (el && !el.value) el.value = operatorEmail(state.user.name) || state.user.email || '';
@@ -1891,6 +2025,7 @@ function editReportModal(idx) {
     `<button class="secondary" data-close>Cancelar</button>
      <button class="primary" data-submit form="report-form"><span class="btn-label">Guardar y reenviar</span></button>`);
   $('#report-form').addEventListener('submit', e => submitReport(e, r.uuid));
+  wireReportHeat(d.heat);
 }
 
 async function submitReport(e, editUuid) {
@@ -2539,6 +2674,8 @@ document.addEventListener('click', e => {
     if (t.dataset.action === 'assign-order') assignOrder(t.dataset.idx, t.dataset.src, t.dataset.cons, t.dataset.herr);
     if (t.dataset.action === 'cfg-save') saveConfig();
     if (t.dataset.action === 'cfg-add') openAddConfig(t.dataset.key);
+    if (t.dataset.action === 'heat-add') heatAddModal();
+    if (t.dataset.action === 'heat-del') delHeat(t.dataset.row, t.dataset.heat, t.dataset.label);
     if (t.dataset.action === 'appr-tab') { state.apprTab = t.dataset.tab; renderApprovals(); }
     if (t.dataset.action === 'sim-open') openSim();
     if (t.dataset.action === 'sim-add') addSimPart();
