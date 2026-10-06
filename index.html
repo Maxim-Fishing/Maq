@@ -638,10 +638,18 @@ let REPORTED = new Set();
 let deepLink = null;
 function handleDeepLink() {
   if (!deepLink) return;
+  if ($('#app').classList.contains('hidden')) return;   // aún en el login: espera a iniciar sesión
+  const isAdmin = state.user && state.user.role === 'Administrador';
   let idx = -1;
-  if (deepLink.accept)      idx = state.solicitudes.findIndex(s => s.uuid === deepLink.accept);
-  else if (deepLink.report) idx = state.reports.findIndex(r => r.uuid === deepLink.report);
-  else if (deepLink.ot)     idx = state.ot.findIndex(o => otCode(o.cons) === otCode(deepLink.ot));
+  if (deepLink.accept) {
+    if (!isAdmin) { deepLink = null; return; }           // aceptar es acción de admin: ignorar para otros
+    idx = state.solicitudes.findIndex(s => s.uuid === deepLink.accept);
+  } else if (deepLink.report) {
+    if (!isAdmin) { deepLink = null; return; }           // aprobar es acción de admin: ignorar para otros
+    idx = state.reports.findIndex(r => r.uuid === deepLink.report);
+  } else if (deepLink.ot) {
+    idx = state.ot.findIndex(o => otCode(o.cons) === otCode(deepLink.ot));   // ver la orden: cualquier rol
+  }
   if (idx < 0) return;                         // aún no está en los datos; el driver reintenta
   const dl = deepLink; deepLink = null;
   if (dl.accept)      openAcceptSolicitud(idx);
@@ -770,18 +778,18 @@ function tornerosCheckboxes(sel = []) {
 }
 const readAsigChecks = () => [...document.querySelectorAll('.asig-chk:checked')].map(c => c.value);
 // Asigna (lista completa nueva; vacía = quitar) y notifica a los nuevos.
-async function asignar(cons, torneros, herr) {
-  if (!liveUrl()) { toast('Sin conexión en vivo.', 'error'); return false; }
+async function asignar(cons, torneros, herr, silent) {
+  if (!liveUrl()) { if (!silent) toast('Sin conexión en vivo.', 'error'); return false; }
   try {
     const r = await postConfig({ formType: 'asignar', cons, torneros, herr: herr || '' });
     if (r.asignaciones) state.asignaciones = r.asignaciones;
     const list = r.torneros || [];
-    toast(r.mailWarning
+    if (!silent) toast(r.mailWarning
       ? 'Asignada, pero un aviso falló: ' + r.mailWarning
       : (list.length ? `Asignada a: ${list.join(', ')}.` : 'Asignación retirada.'),
       r.mailWarning ? 'error' : 'success');
-    return true;
-  } catch (e) { toast('No se pudo asignar: ' + e.message, 'error'); return false; }
+    return r;   // devuelve la respuesta (torneros, mailWarning) para quien lo necesite
+  } catch (e) { if (!silent) toast('No se pudo asignar: ' + e.message, 'error'); return false; }
 }
 
 /* ---------- Fuente de datos (embebida + en vivo) ----------
@@ -2249,10 +2257,15 @@ async function acceptSolicitud(idx, prefijo) {
     try {
       const r = await postConfig({ formType:'aceptar-solicitud', uuid: s.uuid, prefijo });
       s.estado = 'Aprobada';
-      // Asignación opcional al aceptar (uno o varios torneros).
-      if (torneros.length && r.consecutivo) await asignar(r.consecutivo, torneros, s.herr);
+      // Asignación opcional al aceptar (uno o varios torneros) — mismo paso, con aviso al tornero.
+      let asig = null;
+      if (torneros.length && r.consecutivo) asig = await asignar(r.consecutivo, torneros, s.herr, true);
       closeModal(); renderApprovals(); render();
-      toast(`Solicitud aceptada como ${prog}. Consecutivo ${r.consecutivo || ''} generado.`);
+      const asignados = asig && asig.torneros && asig.torneros.length ? asig.torneros.join(', ') : '';
+      const warn = asig && asig.mailWarning ? ' (un aviso falló: ' + asig.mailWarning + ')' : '';
+      toast(`OT ${r.consecutivo || ''} creada (${prog})` +
+            (asignados ? ` y asignada a ${asignados}. Se le notificó.` : '.') + warn,
+            warn ? 'error' : 'success');
       setTimeout(() => refreshLive(false), 2500);
     } catch (e) { toast('No se pudo aceptar: ' + e.message, 'error'); }
   });
@@ -2479,6 +2492,22 @@ function start() {
     show(visible[0]);
     startLive();
     if (role === 'Administrador') fetchConfig();   // precarga tarifas para costo de órdenes y simulación
+
+    // Enlace directo (si venía uno): se resuelve YA logueado, cuando lleguen los datos.
+    // Reintenta un rato porque el feed en vivo puede tardar (arranque en frío / celular).
+    if (deepLink) {
+      let n = 0;
+      const t = setInterval(() => {
+        n++;
+        handleDeepLink();
+        if (!deepLink) { clearInterval(t); return; }
+        if (n % 3 === 0) { try { refreshLive(false); } catch (_) {} }
+        if (n >= 13) {
+          clearInterval(t);
+          if (deepLink) { deepLink = null; toast('No se encontró esa orden (quizá ya fue procesada o aún sincroniza). Usa «Actualizar».', 'error'); }
+        }
+      }, 2000);
+    }
   }, 200);
 }
 
@@ -2567,22 +2596,13 @@ if (token && !DEMO) {
   deepLink = accept ? { accept } : report ? { report } : { ot };
   // Limpia la URL para que no quede el UUID visible ni se reactive al recargar.
   try { history.replaceState(null, '', location.pathname); } catch (_) {}
-  // Auto-ingreso como líder de maquinado.
-  state.user = { name: 'Carlos Hernández', role: 'Administrador' };
-  start();
-  // Driver de reintento: el feed en vivo puede tardar (arranque en frío / celular).
-  // Reintenta abrir la orden y fuerza el refresco hasta encontrarla (o se rinde a los ~26s).
-  let dlTries = 0;
-  const dlTimer = setInterval(() => {
-    dlTries++;
-    handleDeepLink();
-    if (!deepLink) { clearInterval(dlTimer); return; }       // resuelto
-    if (dlTries === 1 || dlTries % 3 === 0) { try { refreshLive(false); } catch (_) {} }
-    if (dlTries >= 13) {
-      clearInterval(dlTimer);
-      if (deepLink) { deepLink = null; toast('No se encontró esa orden (quizá ya fue procesada o aún está sincronizando). Usa «Actualizar».', 'error'); }
-    }
-  }, 2000);
+  // SEGURIDAD: ya NO auto-ingresa. Hay que iniciar sesión; aceptar/aprobar solo lo resuelve un
+  // Administrador (ver handleDeepLink). El enlace se resuelve tras el login desde start().
+  // Si es una acción de admin, mostramos directo la pestaña "Administrador" (pide contraseña).
+  if (accept || report) {
+    const adminTab = document.querySelector('.ltab[data-ltab="admin"]');
+    if (adminTab) adminTab.click();
+  }
 })();
 </script>
 <!-- =====================================================================
