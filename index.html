@@ -319,12 +319,12 @@
         <div class="field">
           <label for="admin-pass">Contraseña de administrador</label>
           <div class="pass-wrap">
-            <input type="password" id="admin-pass" placeholder="Aún sin candado" autocomplete="off">
+            <input type="password" id="admin-pass" placeholder="Escribe tu contraseña" autocomplete="current-password">
             <button type="button" id="admin-pass-toggle" class="pass-toggle" aria-label="Mostrar u ocultar contraseña" aria-pressed="false">Ver</button>
           </div>
         </div>
         <button class="primary" style="margin-top:18px;width:100%" type="submit"><span class="btn-label">Ingresar como administrador</span></button>
-        <p class="notice" style="margin-top:16px">El candado con la hoja de contraseñas se activará al conectar el backend. Por ahora el acceso es directo.</p>
+        <p class="notice" style="margin-top:16px">Acceso restringido. Ingresa la contraseña de administrador para gestionar órdenes, aprobaciones y configuración.</p>
       </form>
 
       <p id="access-message" class="notice hidden" style="margin-top:18px" role="status" aria-live="polite"></p>
@@ -2345,9 +2345,22 @@ $('#free-form').addEventListener('submit', e => {
   start();
 });
 
-$('#admin-form').addEventListener('submit', e => {
+// Candado de administrador: la clave NO va en texto plano; se guarda su hash SHA-256
+// y se compara con el que se escribe. Es un candado básico de la pantalla de ingreso.
+const ADMIN_HASH = '120417a3114b2d8737a0cae9e809fc6899deded64c6925de70a5008cb8f9654c';
+async function sha256hex(str) {
+  const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(str)));
+  return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+$('#admin-form').addEventListener('submit', async e => {
   e.preventDefault();
-  // Sin candado por ahora: se validará contra la hoja de contraseñas al conectar el backend.
+  const inp = $('#admin-pass');
+  const pass = inp.value || '';
+  if (!pass) return toast('Escribe la contraseña de administrador.', 'error');
+  let ok = false;
+  try { ok = (await sha256hex(pass)) === ADMIN_HASH; } catch (_) { ok = false; }
+  if (!ok) { toast('Contraseña incorrecta.', 'error'); inp.value = ''; inp.focus(); return; }
+  inp.value = '';
   state.user = { name: 'Carlos Hernández', role: 'Administrador' };
   start();
 });
