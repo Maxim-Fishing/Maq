@@ -701,6 +701,69 @@ function heatsFor(material, diamMm){
     Math.abs(inchDec(h.od) - inch) < 0.03
   );
 }
+// DURALUMINIO es el único material cuadrado: una sola medida 90×90 mm (no va en pulgadas).
+const DURAL = 'DURALUMINIO';
+const DURAL_OD = '90x90';                 // valor guardado en HT Y CC col J (OD) y para casar lotes
+const DURAL_MM = '90';                    // valor guardado en el reporte (col G = diámetro, matriz de costos)
+const DURAL_LABEL = '90 × 90 mm (cuadrado)';
+// Equivalente en mm (texto de la matriz de costos) de una OD en pulgadas, para guardar en el reporte.
+function odToMm(od){
+  if (norm(od) === norm(DURAL_OD)) return DURAL_MM;
+  const inch = inchDec(od); if (isNaN(inch)) return '';
+  const target = inch * 25.4;
+  let best = '', diff = 0.06;
+  for (const d of DIAMETROS_MM){ const dd = Math.abs(parseFloat(d) - target); if (dd < diff){ diff = dd; best = d; } }
+  return best || target.toFixed(2);
+}
+// Etiqueta a mostrar para una medida (pulgadas tal cual, o la medida cuadrada del duraluminio).
+function odLabel(od){ return norm(od) === norm(DURAL_OD) ? DURAL_LABEL : esc(od); }
+// Medidas (OD) DISTINTAS con lote DISPONIBLE para un material (para el selector del reporte).
+function availableOdsFor(material){
+  const mat = norm(material || ''); if (!mat) return [];
+  const seen = {}, out = [];
+  (state.heats || []).forEach(h => {
+    if (norm(h.estado || '') === 'DISPONIBLE' && norm(h.ref || '') === mat && h.od){
+      const k = norm(h.od); if (!seen[k]){ seen[k] = 1; out.push(h.od); }
+    }
+  });
+  out.sort((a, b) => (inchDec(a) || 0) - (inchDec(b) || 0));
+  return out;
+}
+// Lotes (Heat) DISPONIBLES para un material + OD exacta (casa por texto de la medida).
+function heatsForOd(material, od){
+  const mat = norm(material || ''), o = norm(od || '');
+  if (!mat || !o) return [];
+  return (state.heats || []).filter(h =>
+    norm(h.estado || '') === 'DISPONIBLE' && norm(h.ref || '') === mat && norm(h.od || '') === o
+  );
+}
+// <option>s del selector de MEDIDA del reporte: value = mm (para costos), label = pulgadas, data-od = OD exacta.
+function reportDiamOptions(material, selMm){
+  const ods = availableOdsFor(material);
+  let html;
+  if (!material) html = '<option value="">— elige material primero —</option>';
+  else if (!ods.length) html = '<option value="">— sin medidas disponibles —</option>';
+  else {
+    // Si solo hay una medida disponible (p. ej. duraluminio), se autoselecciona.
+    const auto = (ods.length === 1 && (selMm == null || selMm === ''));
+    html = (auto ? '' : '<option value="">— Selecciona —</option>') + ods.map(od => {
+      const mm = odToMm(od);
+      const sel = (auto || (selMm != null && selMm !== '' && String(mm) === String(selMm))) ? ' selected' : '';
+      return `<option value="${esc(mm)}" data-od="${esc(od)}"${sel}>${odLabel(od)}</option>`;
+    }).join('');
+  }
+  // Conserva una medida previa (edición) aunque su lote ya se haya agotado.
+  if (selMm != null && selMm !== '' && !ods.some(od => String(odToMm(od)) === String(selMm))){
+    html += `<option value="${esc(selMm)}" selected>${esc(selMm)} mm (registrado)</option>`;
+  }
+  return html;
+}
+// <option>s del selector de MEDIDA al agregar material: solo 90×90 para duraluminio, pulgadas para el resto.
+function odOptionsForAdd(material){
+  const opts = (norm(material) === norm(DURAL)) ? [DURAL_OD] : OD_PULGADAS;
+  return '<option value="">— Selecciona —</option>' +
+    opts.map(o => `<option value="${esc(o)}">${odLabel(o)}</option>`).join('');
+}
 const workTypeOptions = (sel = '') =>
   `<option value="">— Selecciona —</option>` +
   WORK_TYPES.map(t => `<option value="${esc(t)}"${norm(t) === norm(sel) ? ' selected' : ''}>${esc(t)}</option>`).join('');
@@ -1738,7 +1801,7 @@ function renderHeatsAdmin() {
       <thead><tr><th>Material</th><th>Medida (OD)</th><th>Heat</th><th>OC</th>${isAdmin ? '<th>Quitar</th>' : ''}</tr></thead>
       <tbody>${sorted.map(h => `<tr>
         <td data-label="Material"><b>${esc(h.ref)}</b></td>
-        <td data-label="Medida (OD)">${esc(h.od)}</td>
+        <td data-label="Medida (OD)">${odLabel(h.od)}</td>
         <td data-label="Heat">${esc(h.heat)}</td>
         <td data-label="OC">${esc(h.oc || '—')}</td>
         ${isAdmin ? `<td data-label="Quitar"><button class="secondary" style="color:var(--red,#c23b3b);padding:4px 11px;font-weight:700" title="Quitar (se acabó el material)" data-action="heat-del" data-row="${esc(String(h.row))}" data-heat="${esc(h.heat)}" data-label="${esc(h.ref + ' ' + h.od)}">✕</button></td>` : ''}
@@ -1746,19 +1809,25 @@ function renderHeatsAdmin() {
 }
 function heatAddModal() {
   const matOpts = MATERIALS.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
-  const odOpts = OD_PULGADAS.map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('');
   modal('Agregar material (lote / Heat)', `
     <form id="heat-form" class="form" novalidate>
       <div class="form-grid">
         <div class="field"><label for="ha-ref">Material</label><select id="ha-ref" name="ref" required><option value="">— Selecciona —</option>${matOpts}</select></div>
-        <div class="field"><label for="ha-od">Medida (OD en pulgadas)</label><select id="ha-od" name="od" required><option value="">— Selecciona —</option>${odOpts}</select></div>
+        <div class="field"><label for="ha-od">Medida</label><select id="ha-od" name="od" required disabled><option value="">— elige material primero —</option></select></div>
         <div class="field"><label for="ha-heat">Heat No.</label><input id="ha-heat" name="heat" required placeholder="Ej. BXD, 24809926"></div>
         <div class="field"><label for="ha-oc">OC</label><input id="ha-oc" name="oc" placeholder="Ej. 20462 (opcional)"></div>
       </div>
-      <p class="muted" style="margin:8px 0 0">Se agrega a la hoja HT Y CC como <b>DISPONIBLE</b> y queda listo para que los torneros lo elijan.</p>
+      <p class="muted" style="margin:8px 0 0">Las medidas van en <b>pulgadas</b>; el <b>duraluminio</b> es cuadrado (única medida 90×90 mm). Se agrega a la hoja HT Y CC como <b>DISPONIBLE</b> y queda listo para que los torneros lo elijan.</p>
     </form>`,
     `<button class="secondary" data-close>Cancelar</button>
      <button class="primary" data-submit form="heat-form"><span class="btn-label">Guardar material</span></button>`);
+  const refSel = $('#ha-ref'), odSel = $('#ha-od');
+  refSel.addEventListener('change', () => {
+    if (!refSel.value){ odSel.disabled = true; odSel.innerHTML = '<option value="">— elige material primero —</option>'; return; }
+    odSel.disabled = false;
+    odSel.innerHTML = odOptionsForAdd(refSel.value);
+    if (norm(refSel.value) === norm(DURAL)) odSel.value = DURAL_OD;   // duraluminio: única medida, ya elegida
+  });
   $('#heat-form').addEventListener('submit', saveHeat);
 }
 async function saveHeat(e) {
@@ -1953,7 +2022,7 @@ function reportFormFields(d = {}) {
         <div class="section-label">Parte y material</div>
         <div class="field"><label for="rep-part">Parte / componente</label><input id="rep-part" name="part" value="${esc(d.part || '')}" placeholder="Qué se maquinó"></div>
         <div class="field"><label for="rep-mat">Material</label><select id="rep-mat" name="material">${materialOptions(d.material || '')}</select></div>
-        <div class="field"><label for="rep-diam">Diámetro (mm)</label><select id="rep-diam" name="diam">${diametroOptions(d.diam || '')}</select></div>
+        <div class="field"><label for="rep-diam">Medida <span class="muted" style="font-weight:400">(según material)</span></label><select id="rep-diam" name="diam">${reportDiamOptions(d.material || '', d.diam != null ? d.diam : '')}</select></div>
         <div class="field"><label for="rep-long">Longitud (cm)</label><input id="rep-long" name="length" type="number" step="any" min="0" inputmode="decimal" value="${esc(d.long || '')}" placeholder="Libre"></div>
         <div class="section-label">Operación y tiempos</div>
         <div class="field full"><p class="notice" style="margin:0">Debes elegir <b>torno o fresa</b> (o ambos) — sin eso no se calcula el costo. Tiempos en <b>horas decimales</b>: 0.5 = 30 min · 1.5 = 1 h 30 min.</p></div>
@@ -1965,12 +2034,20 @@ function reportFormFields(d = {}) {
         <div class="field"><label for="rep-oc">OC <span class="muted" style="font-weight:400">(automático)</span></label><input id="rep-oc" name="oc" readonly tabindex="-1" value="${esc(d.oc || '')}" placeholder="—" style="background:#f3f4f6;color:#374151;cursor:not-allowed"></div>
       </div>`;
 }
-// Rellena las opciones de Heat según material + diámetro(mm) elegidos; autollena si hay uno solo.
+// Reconstruye el selector de MEDIDA según el material elegido (solo medidas con lote disponible).
+function updateReportDiam(presetMm){
+  const selMat = $('#rep-mat'), selDiam = $('#rep-diam');
+  if (!selDiam) return;
+  selDiam.innerHTML = reportDiamOptions(selMat ? selMat.value : '', presetMm != null ? presetMm : '');
+}
+// Rellena las opciones de Heat según material + medida (OD) elegidos; autollena si hay uno solo.
 function updateReportHeat(preset){
   const selMat = $('#rep-mat'), selDiam = $('#rep-diam'), heatSel = $('#rep-heat');
   if (!heatSel) return;
+  const diamOpt = selDiam ? selDiam.options[selDiam.selectedIndex] : null;
+  const od = diamOpt ? diamOpt.getAttribute('data-od') : '';
   const hasBoth = selMat && selMat.value && selDiam && selDiam.value;
-  const matches = hasBoth ? heatsFor(selMat.value, selDiam.value) : [];
+  const matches = (hasBoth && od) ? heatsForOd(selMat.value, od) : [];
   let html;
   if (!hasBoth) {
     html = '<option value="">— elige material y medida —</option>';
@@ -1979,8 +2056,10 @@ function updateReportHeat(preset){
   } else if (matches.length === 1) {
     html = `<option value="${esc(matches[0].heat)}" data-oc="${esc(matches[0].oc || '')}" selected>${esc(matches[0].heat)}</option>`;
   } else {
-    html = '<option value="">— elige el lote —</option>' +
-      matches.map(h => `<option value="${esc(h.heat)}" data-oc="${esc(h.oc || '')}">${esc(h.heat)}</option>`).join('');
+    const pre = norm(preset || '');
+    const anySel = matches.some(h => norm(h.heat) === pre);
+    html = `<option value=""${anySel ? '' : ' selected'}>— elige el lote —</option>` +
+      matches.map(h => `<option value="${esc(h.heat)}" data-oc="${esc(h.oc || '')}"${norm(h.heat) === pre ? ' selected' : ''}>${esc(h.heat)}</option>`).join('');
   }
   // Conserva un Heat previo (edición) que ya no esté en la lista de disponibles.
   if (preset && !matches.some(h => norm(h.heat) === norm(preset))) {
@@ -1996,11 +2075,14 @@ function syncReportOc(){
   const opt = heatSel.options[heatSel.selectedIndex];
   ocBox.value = (opt && opt.getAttribute('data-oc')) || '';
 }
-// Conecta los selectores de material/diámetro/heat del modal de reporte.
-function wireReportHeat(preset){
-  ['#rep-mat', '#rep-diam'].forEach(id => { const el = $(id); if (el) el.addEventListener('change', () => updateReportHeat()); });
+// Conecta los selectores de material/medida/heat del modal de reporte.
+function wireReportHeat(presetHeat, presetDiam){
+  const selMat = $('#rep-mat');
+  if (selMat) selMat.addEventListener('change', () => { updateReportDiam(); updateReportHeat(); });
+  const selDiam = $('#rep-diam'); if (selDiam) selDiam.addEventListener('change', () => updateReportHeat());
   const hs = $('#rep-heat'); if (hs) hs.addEventListener('change', syncReportOc);
-  updateReportHeat(preset);
+  updateReportDiam(presetDiam);
+  updateReportHeat(presetHeat);
 }
 function reportModal() {
   modal('Registrar trabajo de maquinado', `<form id="report-form" class="form" novalidate>${reportFormFields()}</form>`,
@@ -2025,7 +2107,7 @@ function editReportModal(idx) {
     `<button class="secondary" data-close>Cancelar</button>
      <button class="primary" data-submit form="report-form"><span class="btn-label">Guardar y reenviar</span></button>`);
   $('#report-form').addEventListener('submit', e => submitReport(e, r.uuid));
-  wireReportHeat(d.heat);
+  wireReportHeat(d.heat, d.diam);
 }
 
 async function submitReport(e, editUuid) {
