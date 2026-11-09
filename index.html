@@ -998,7 +998,11 @@ async function fetchConfig(force) {
     const data = await res.json();
     if (data && data.config) { state.configVars = data.config; configLoaded = true; rebuildReportOpFilter(); }
   } catch (e) { if (host) host.innerHTML = '<p class="notice error">No se pudieron leer las variables: ' + esc(e.message) + '</p>'; }
-  finally { configLoading = false; renderConfigVars(); }
+  finally {
+    configLoading = false; renderConfigVars();
+    // Al llegar las tarifas, recalcula los costos en vivo (oct en adelante) si la vista Costos está abierta.
+    if (state.configVars) { const cv = $('#costs'); if (cv && cv.classList.contains('active')) renderCosts(); }
+  }
 }
 
 /* Editor de variables de costo. Cada hoja del libro BALANCE se describe con las
@@ -1062,7 +1066,30 @@ const CONFIG_DEF = {
 
 let configDirty = {};  // { 'HOJA!fila!col': {sheet,row,col,value,label} }
 const cv_ = x => (x == null ? '' : String(x)).trim();
-const numFromDisplay = s => { const n = parseFloat(String(s == null ? '' : s).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? '' : n; };
+// Convierte un valor mostrado a número, entendiendo formato US (1,234.56) Y
+// colombiano/europeo (1.234,56). Necesario porque al convertir las hojas de xlsx
+// a Google Sheets la configuración regional quedó en es-CO (coma decimal), y antes
+// era US (punto decimal). Detecta el separador decimal por el ÚLTIMO que aparece.
+const numFromDisplay = s => {
+  let v = String(s == null ? '' : s).replace(/[^0-9.,\-]/g, '');
+  if (!v) return '';
+  const c = v.lastIndexOf(','), d = v.lastIndexOf('.');
+  if (c >= 0 && d >= 0) {
+    // ambos separadores: el ÚLTIMO es el decimal
+    v = (c > d) ? v.replace(/\./g, '').replace(',', '.')   // es-CO: 1.234,56
+                : v.replace(/,/g, '');                      // US: 1,234.56
+  } else if (c >= 0) {
+    // solo coma: decimal si hay 1–2 dígitos tras la última coma; si no, miles
+    v = (v.length - c - 1) <= 2 ? v.replace(/\./g, '').replace(',', '.') : v.replace(/,/g, '');
+  } else if (d >= 0) {
+    // solo punto(s): varios = miles; uno con 3 dígitos detrás = miles (es-CO); 1–2 = decimal (US)
+    const n = (v.match(/\./g) || []).length;
+    if (n > 1) v = v.replace(/\./g, '');
+    else if ((v.length - d - 1) === 3) v = v.replace(/\./g, '');
+  }
+  const num = parseFloat(v);
+  return isNaN(num) ? '' : num;
+};
 
 function cfgCell(def, row, fx, c, sheetRow) {
   const raw = row[c.col - 1] != null ? row[c.col - 1] : '';
@@ -1595,12 +1622,72 @@ function costCard(titulo, header, rows) {
     <table class="mini"><thead><tr>${header.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
     <tbody>${rows || `<tr><td colspan="${header.length}" class="muted" style="padding:14px">Sin datos</td></tr>`}</tbody></table></div></article>`;
 }
+// Costos por mes calculados EN VIVO desde los reportes (hoja RESULTADOS) + tarifas
+// actuales (PERSONAL/ENERGIA/MATERIAL), con el mismo motor que orderCost. Sirve
+// porque la hoja GENERAL dejó de consolidarse (su automatización vivía en la cuenta
+// vieja, ya cerrada), así que oct-2026 en adelante no aparecía.
+function computeLiveCosts(){
+  const rates = costRates(); if (!rates) return null;
+  const otHerr = {}, otCC = {};
+  (state.ot || []).forEach(o => { const c = otCode(o.cons || ''); if (c){ otHerr[c] = o.herr || ''; otCC[c] = o.cc || ''; } });
+  const byMes = {};
+  (state.reports || []).forEach(r => {
+    if (/rechaz/i.test(r.estado || '')) return;
+    const mo = /^(\d{4})-(\d{2})/.exec(r.fecha || ''); if (!mo) return;   // ignora fechas mal formadas
+    const mm = +mo[2]; if (mm < 1 || mm > 12) return;
+    const mes = mo[1] + '-' + mo[2];
+    const code = otCode(r.cons || '');
+    const g = byMes[mes] || (byMes[mes] = { material:0,torno:0,fresa:0,mo:0,arriendo:0,total:0,partes:0, ots:{}, ot:{}, op:{}, cc:{} });
+    let repTotal = 0;
+    (r.partes || []).forEach(p => {
+      const c = costParte(rates, { material:p.ref, diam:p.diam, long:p.long, torno:p.torno,
+        tiemposTorno:[p.tTorno,p.perf,p.mand,p.acab,p.pin,p.box], fresa:p.fresa, tFresa:p.tFresa, operador:r.op });
+      g.material+=c.cMat; g.torno+=c.cTorno; g.fresa+=c.cFresa; g.mo+=c.cMO; g.arriendo+=c.cArr; g.total+=c.total; g.partes++; repTotal+=c.total;
+    });
+    const opN = r.op || '—';
+    const op = g.op[opN] || (g.op[opN] = { op:opN, ots:{}, total:0 }); op.total += repTotal;
+    if (code){ g.ots[code]=1; op.ots[code]=1;
+      const ot = g.ot[code] || (g.ot[code] = { cons:code, herr:otHerr[code]||'', total:0 }); ot.total += repTotal;
+      const ccN = otCC[code] || ''; if (ccN){ const cc = g.cc[ccN] || (g.cc[ccN] = { cc:ccN, ots:{}, total:0 }); cc.total += repTotal; cc.ots[code]=1; }
+    }
+  });
+  const R = n => Math.round(n || 0);
+  const months = [], byMonth = {};
+  Object.keys(byMes).sort().forEach(mes => {
+    const g = byMes[mes];
+    months.push({ mes, material:R(g.material), torno:R(g.torno), fresa:R(g.fresa), mo:R(g.mo), arriendo:R(g.arriendo), total:R(g.total), partes:g.partes, ots:Object.keys(g.ots).length });
+    const top = obj => Object.keys(obj).map(k=>obj[k]).sort((a,b)=>b.total-a.total).slice(0,15);
+    byMonth[mes] = {
+      ots: top(g.ot).map(x=>({ cons:x.cons, herr:x.herr, total:R(x.total) })),
+      operadores: top(g.op).map(x=>({ op:x.op, ots:Object.keys(x.ots).length, total:R(x.total) })),
+      centros: top(g.cc).map(x=>({ cc:x.cc, ots:Object.keys(x.ots).length, total:R(x.total) }))
+    };
+  });
+  return { months, byMonth };
+}
+function ensureLiveCosts(){
+  if (!state.configVars) { state._costsLive = null; return null; }   // sin tarifas aún
+  const key = (state.reports ? state.reports.length : 0) + '|' + (state.updated || '');
+  if (state._costsLive && state._costsLiveKey === key) return state._costsLive;
+  state._costsLive = computeLiveCosts(); state._costsLiveKey = key;
+  return state._costsLive;
+}
+// Costos por mes = cálculo EN VIVO desde los reportes (todos los meses, consistente,
+// incluye los meses nuevos). La hoja GENERAL ya no se actualiza (su automatización
+// vivía en la cuenta cerrada) y además sub-contaba, así que solo sirve de respaldo
+// mientras cargan las tarifas.
+function costsHybrid(){
+  const live = ensureLiveCosts();
+  if (live && live.months.length) return live.months.map(m => Object.assign({ _src:'calc' }, m));
+  return (state.costs || []).slice();   // respaldo: GENERAL mientras llegan las tarifas
+}
 function renderCosts() {
-  const meses = state.costs || [];
+  const meses = costsHybrid();
+  const calcN = meses.filter(x => x._src === 'calc').length;
   $('#costs-src').textContent = costsLoading
     ? 'calculando costos en vivo… (puede tardar)'
     : (state.costsIsLive
-        ? `${meses.length} meses · en vivo`
+        ? `${meses.length} meses · ${calcN === meses.length ? 'calculado desde reportes · tarifas actuales' : 'en vivo'}`
         : (meses.length ? `${meses.length} meses · muestra (se completa al conectar el feed)` : ''));
 
   const sel = $('#costs-month');
@@ -1631,7 +1718,11 @@ function renderCosts() {
       <span class="bar-lbl">${esc(x.mes)}</span>
     </div>`).join('')}</div>`;
 
-  const d = (state.costsDetail || {})[selMes] || {};
+  const rowSel = meses.find(x => x.mes === selMes) || m;
+  const live = state._costsLive;
+  const d = (rowSel && rowSel._src === 'calc' && live && live.byMonth && live.byMonth[selMes])
+    ? live.byMonth[selMes]
+    : ((state.costsDetail || {})[selMes] || {});
   const topOT = (d.ots || []).map(o => `<tr><td><b>${esc(o.cons)}</b></td><td class="subject">${esc(o.herr || '—')}</td><td>${money(o.total)}</td></tr>`).join('');
   const topOp = (d.operadores || []).map(o => `<tr><td>${esc(o.op)}</td><td>${o.ots || 0}</td><td>${money(o.total)}</td></tr>`).join('');
   const topCC = (d.centros || []).map(o => `<tr><td>${esc(o.cc)}</td><td>${o.ots || 0}</td><td>${money(o.total)}</td></tr>`).join('');
