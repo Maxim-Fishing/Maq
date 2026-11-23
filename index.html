@@ -2535,13 +2535,84 @@ function openOrder(idx, src) {
       const isAdmin = state.user.role === 'Administrador';
       const canClose = src === 'ot' && isAdmin && /abierta/i.test(o.estado || '');
       const canEditSol = src === 'sol' && (isAdmin || state.user.role === 'Solicitante') && /pendiente/i.test(o.estado || '');
-      return `${canClose ? `<button class="danger" data-action="close-order" data-cons="${esc(o.cons)}">Cerrar orden</button>` : ''}
+      return `${(src === 'ot' && o.cons) ? `<button class="secondary" data-action="order-pdf" data-idx="${idx}" data-src="${src}">📄 Descargar PDF</button>` : ''}
+        ${canClose ? `<button class="danger" data-action="close-order" data-cons="${esc(o.cons)}">Cerrar orden</button>` : ''}
         ${canEditSol ? `<button class="primary" data-action="edit-sol" data-idx="${idx}">Editar solicitud</button>` : ''}
         <button class="secondary" data-close>Cerrar</button>`;
     })());
   // Poblar los torneros si la config no estaba cargada.
   if (src === 'ot' && o.cons && state.user.role === 'Administrador' && !state.configVars)
     fetchConfig().then(() => { const box = $('#assign-box'); if (box) box.innerHTML = tornerosCheckboxes(asignadosDe(o.cons)); }).catch(() => {});
+}
+
+// Informe de costo de la orden en PDF (ventana de impresión → Guardar como PDF), formato Maxim.
+async function orderPdf(idx, src) {
+  const o = (src === 'sol' ? state.solicitudes : state.ot)[idx]; if (!o) return;
+  if (src === 'ot' && o.cons && !costRates()) { toast('Cargando tarifas…'); try { await fetchConfig(true); } catch (e) {} }
+  const code = o.cons ? otCode(o.cons) : '';
+  const linked = (src === 'ot' && o.cons) ? state.reports.filter(r => otCode(r.cons) === code) : [];
+  const asign = (src === 'ot' && o.cons) ? asignadosDe(o.cons) : [];
+  const c = (src === 'ot' && o.cons) ? orderCost(o.cons) : null;
+  const logo = (getComputedStyle(document.documentElement).getPropertyValue('--logo-url').match(/data:image\/[a-z+]+;base64,[^"')]+/) || [])[0];
+  const row = (k, v) => v ? `<tr><td class="k">${esc(k)}</td><td>${esc(v)}</td></tr>` : '';
+  const partesHtml = (o.partes || []).length
+    ? `<h2>Partes</h2><table><thead><tr><th>Cant.</th><th>Parte</th></tr></thead><tbody>${o.partes.map(p => `<tr><td>${esc(p.q || '')}</td><td>${esc(p.n)}</td></tr>`).join('')}</tbody></table>` : '';
+  const repHtml = linked.length
+    ? `<h2>Reportes (${linked.length})</h2><table><thead><tr><th>Operador</th><th>Fecha</th><th>Partes</th><th>Estado</th></tr></thead><tbody>${linked.map(r => `<tr><td>${esc(r.op || '—')}</td><td>${esc(fmtDate(r.fecha))}</td><td>${(r.partes || []).length}</td><td>${esc(r.estado || '—')}</td></tr>`).join('')}</tbody></table>` : '';
+  const costHtml = c
+    ? `<div class="costbox"><table class="tot">
+        <tr><td>Material</td><td>${money(c.cMat)}</td></tr>
+        <tr><td>Torno</td><td>${money(c.cTorno)}</td></tr>
+        <tr><td>Fresa</td><td>${money(c.cFresa)}</td></tr>
+        <tr><td>Mano de obra</td><td>${money(c.cMO)}</td></tr>
+        <tr><td>Arriendo</td><td>${money(c.cArr)}</td></tr>
+        <tr><td class="grand">COSTO TOTAL</td><td class="grand">${money(c.total)}</td></tr>
+      </table><p class="note">${c.reportes} reporte(s) · ${c.partes} parte(s) maquinada(s).</p></div>`
+    : `<p class="note">El costo se calcula con las tarifas del panel Costos; ábrelo una vez para cargarlas y vuelve a generar el PDF.</p>`;
+  const w = window.open('', '_blank');
+  if (!w) return toast('Permite las ventanas emergentes para descargar el PDF.', 'error');
+  w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>OT ${esc(o.cons || '')}</title>
+    <style>
+    body{font-family:Arial,Helvetica,sans-serif;color:#262626;margin:34px}
+    .head{display:flex;align-items:center;gap:16px;border-bottom:3px solid #ff6b00;padding-bottom:12px;margin-bottom:16px}
+    .head img{height:54px}
+    h1{font-size:20px;margin:0;color:#111318}.head .sub{color:#ff6b00;font-weight:700;margin:2px 0 0;font-size:14px}
+    h2{font-size:13px;color:#ff6b00;margin:18px 0 6px;text-transform:uppercase;letter-spacing:.03em}
+    table{width:100%;border-collapse:collapse;margin:4px 0}
+    th,td{border:1px solid #ddd;padding:6px 9px;font-size:12.5px;text-align:left;vertical-align:top}
+    th{background:#424242;color:#fff}
+    td.k{background:#f3f4f6;font-weight:700;width:34%}
+    .ind{border:1px solid #eee;border-radius:8px;padding:10px 12px;background:#fafafa;font-size:12.5px;white-space:pre-wrap}
+    .costbox{margin-top:16px;max-width:360px;margin-left:auto;border:1px solid #eee;border-radius:8px;padding:12px}
+    .tot td{border:0;padding:4px 6px}.tot td:last-child{text-align:right;font-weight:700}
+    .grand{font-size:17px;color:#ff6b00;border-top:2px solid #e5e7eb!important}
+    .note{color:#888;font-size:11px;margin-top:8px}
+    .footer{color:#888;font-size:11px;margin-top:26px;border-top:1px solid #eee;padding-top:8px}
+    @media print{body{margin:14mm}}
+    </style></head><body>
+    <div class="head">${logo ? `<img src="${logo}">` : ''}<div><h1>Informe de costo de orden</h1><div class="sub">${esc(o.cons || '')} · ${esc(o.herr || 'Orden de trabajo')}</div></div></div>
+    <table>
+      ${row('Consecutivo', o.cons)}
+      ${row('Estado', o.estado)}
+      ${row('Herramienta', o.herr)}
+      ${row('Código de herramienta', o.cod)}
+      ${row('Tipo de OT', o.tipo)}
+      ${row('Tipo de trabajo', o.trab)}
+      ${row('Solicitante', o.sol)}
+      ${row('Centro de costos', o.cc)}
+      ${row('Fecha de solicitud', fmtDate(o.fecha))}
+      ${row('Fecha requerida', fmtDate(o.entrega))}
+      ${asign.length ? row('Asignada a', asign.join(', ')) : ''}
+    </table>
+    ${o.ind ? `<h2>Indicaciones del cliente</h2><div class="ind">${esc(o.ind)}</div>` : ''}
+    ${partesHtml}
+    ${repHtml}
+    <h2>Costo de la orden · tarifas actuales</h2>
+    ${costHtml}
+    <div class="footer">MAXIM FISHING SOLUTIONS PROVIDE S.A.S. · Generado ${new Date().toLocaleDateString('es-CO')} · Valor de referencia con tarifas vigentes del libro BALANCE.</div>
+    <script>window.onload=function(){window.print();}<\/script>
+    </body></html>`);
+  w.document.close();
 }
 
 // Asigna la OT del panel Ver orden (uno o varios torneros) y reabre el panel con el cambio.
@@ -3024,6 +3095,7 @@ document.addEventListener('click', e => {
     if (t.dataset.action === 'sim-calc') simCalc();
     if (t.dataset.action === 'sim-pdf') simPdf();
     if (t.dataset.action === 'close-order') closeOrder(t.dataset.cons);
+    if (t.dataset.action === 'order-pdf') orderPdf(+t.dataset.idx, t.dataset.src);
     if (t.dataset.action === 'edit-sol') editSolModal(+t.dataset.idx);
   }
 });
