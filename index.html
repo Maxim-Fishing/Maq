@@ -997,7 +997,7 @@ async function fetchConfig(force) {
     const sep = url.includes('?') ? '&' : '?';
     const res = await fetch(url + sep + 'action=config', { method:'GET' });
     const data = await res.json();
-    if (data && data.config) { state.configVars = data.config; configLoaded = true; rebuildReportOpFilter(); }
+    if (data && data.config) { state.configVars = data.config; configLoaded = true; state._costsLive = null; rebuildReportOpFilter(); }
   } catch (e) { if (host) host.innerHTML = '<p class="notice error">No se pudieron leer las variables: ' + esc(e.message) + '</p>'; }
   finally {
     configLoading = false; renderConfigVars();
@@ -1145,8 +1145,8 @@ function renderConfigVars() {
       .cfg-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 14px}
     </style>
     <div class="cfg-toolbar">
-      <button class="primary" id="cfg-save" data-action="cfg-save" disabled><span class="btn-label">Sin cambios</span></button>
-      <span class="muted">Edita los campos y pulsa guardar. Las columnas con 🔒 se calculan solas.</span>
+      <button class="primary" id="cfg-save" data-action="cfg-save" disabled><span class="btn-label">Guardar cambios</span></button>
+      <span class="muted">Edita las tarifas (torno, fresa, arriendo, material, salarios) y pulsa <b>Guardar</b>. Las columnas con 🔒 se recalculan solas y los costos se actualizan al guardar.</span>
     </div>
     <div class="config-block"><h4 style="margin:0 0 6px">${esc(CONFIG_DEF.personal.title)}</h4>${renderConfigTable('personal', cfg.personal)}</div>
     <div class="config-block" style="margin-top:18px"><h4 style="margin:0 0 6px">${esc(CONFIG_DEF.energia.title)}</h4>${renderConfigTable('energia', cfg.energia)}</div>
@@ -1172,7 +1172,7 @@ function cfgDirtyCount() { return Object.keys(configDirty).length; }
 function updateDirtyUI() {
   const n = cfgDirtyCount(), b = $('#cfg-save'); if (!b) return;
   b.disabled = !n;
-  b.querySelector('.btn-label').textContent = n ? `Guardar ${n} cambio(s)` : 'Sin cambios';
+  b.querySelector('.btn-label').textContent = n ? `Guardar ${n} cambio(s)` : 'Guardar cambios';
 }
 
 async function postConfig(body) {
@@ -1193,8 +1193,9 @@ function saveConfig() {
       try {
         const r = await postConfig({ formType:'config-set', edits: edits.map(e => ({ sheet:e.sheet, row:e.row, col:e.col, value:e.value })) });
         configDirty = {};
-        toast(`Guardado (${r.applied} celda(s)).`);
-        await fetchConfig(true);   // relee para mostrar los valores recalculados
+        await fetchConfig(true);            // relee valores recalculados + invalida el caché de costos
+        state._costsLive = null;            // fuerza recálculo de "Costos por mes" con las nuevas tarifas
+        toast(`Guardado: ${r.applied} celda(s). Tarifas y costos recalculados.`);
       } catch (e) { toast('No se pudo guardar: ' + e.message, 'error'); }
     });
   });
